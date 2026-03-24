@@ -65,7 +65,11 @@ def main():
     api_key = get_etherscan_api_key()
 
     # Get output directory
-    output_dir = get_output_dir(args.output_dir)
+    # Default: ~/.solidity-analyzer/contracts/{chainId}/{address}
+    if args.output_dir is None:
+        output_dir = get_output_dir(None) / "contracts" / str(args.chain_id) / address
+    else:
+        output_dir = get_output_dir(args.output_dir)
 
     chain_name = get_chain_name(args.chain_id)
 

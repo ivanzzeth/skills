@@ -9,8 +9,10 @@ SKILL_DIR = Path(__file__).parent.parent
 DATA_DIR = SKILL_DIR / "data"
 CHAINS_FILE = DATA_DIR / "chains.json"
 
-# Default output directory (current working directory)
-DEFAULT_OUTPUT_BASE = "."
+# Default output base directory
+# ~/.solidity-analyzer is the shared workspace for all solidity analysis skills
+# (etherscan-contract-fetcher, solidity-poc, solidity-audit, etc.)
+DEFAULT_OUTPUT_BASE = os.path.expanduser("~/.solidity-analyzer")
 
 # Etherscan API
 ETHERSCAN_API_URL = "https://api.etherscan.io/v2/api"

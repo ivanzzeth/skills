@@ -39,27 +39,43 @@ pip install requests
 ### Fetch Contract Source
 
 ```bash
+# Default output: ~/.solidity-analyzer/contracts/{chainId}/{address}
 python3 scripts/fetch_contract.py \
-  --chain-id CHAIN_ID \
-  --address CONTRACT_ADDRESS \
-  --output-dir ./contracts/{chainId}/{address}
+  --chain-id 1 \
+  --address 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D
+
+# Custom output directory
+python3 scripts/fetch_contract.py \
+  --chain-id 1 \
+  --address 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D \
+  --output-dir /path/to/custom/dir
 ```
 
 **Parameters:**
 - `--chain-id`, `-c`: Chain ID (see Supported Chains below)
 - `--address`, `-a`: Contract address (0x...)
-- `--output-dir`, `-o`: Directory to save source files
+- `--output-dir`, `-o`: Custom output directory (default: `~/.solidity-analyzer/contracts/{chainId}/{address}`)
 
-### Output Structure
+### Standard Directory Structure
+
+All solidity analysis skills (etherscan-contract-fetcher, solidity-poc, solidity-audit) share a common workspace at `~/.solidity-analyzer/`:
 
 ```
-{output-dir}/
-├── source/              # Solidity source files (flattened or multi-file)
-│   ├── Contract.sol
-│   └── interfaces/
-├── abi.json             # Contract ABI
-├── metadata.json        # Compiler version, optimization, etc.
-└── proxy_info.json      # If proxy detected: implementation address, admin, etc.
+~/.solidity-analyzer/
+├── contracts/{chainId}/{address}/     # Fetched contract sources
+│   ├── source/                        # Solidity source files
+│   │   ├── Contract.sol
+│   │   └── interfaces/
+│   ├── abi.json                       # Contract ABI
+│   ├── metadata.json                  # Compiler version, optimization, etc.
+│   └── proxy_info.json               # If proxy detected
+├── audits/{protocol}/                 # Audit reports and analysis (solidity-audit)
+│   ├── 01-source-analysis.md
+│   ├── ...
+│   └── AUDIT-REPORT.md
+└── poc/{protocol}/                    # POC tests (solidity-poc)
+    ├── test/poc/
+    └── foundry.toml
 ```
 
 ### Proxy Detection

@@ -26,13 +26,16 @@ Foundry-based POC development methodology for proving smart contract vulnerabili
 
 ## Setup
 
-```bash
-# Initialize Foundry project for POC
-forge init poc --template https://github.com/foundry-rs/forge-template
-cd poc
+POC projects live in the shared solidity analysis workspace at `~/.solidity-analyzer/poc/{protocol}/`.
 
-# Or within an existing project, create POC directory
-mkdir -p test/poc
+```bash
+# Initialize POC project in standard location
+mkdir -p ~/.solidity-analyzer/poc/{protocol}
+cd ~/.solidity-analyzer/poc/{protocol}
+forge init . --template https://github.com/foundry-rs/forge-template
+
+# Contract sources fetched by etherscan-contract-fetcher are at:
+# ~/.solidity-analyzer/contracts/{chainId}/{address}/
 ```
 
 ## Running POC Tests
