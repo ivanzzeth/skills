@@ -12,7 +12,6 @@ from .config import (
     EIP1967_BEACON_SLOT,
     EIP1967_IMPLEMENTATION_SLOT,
     get_etherscan_api_key,
-    get_rpc_url,
 )
 
 
