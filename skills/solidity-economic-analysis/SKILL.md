@@ -12,12 +12,23 @@ description: >
 
 Steps 8 and 8.5 of the Solidity audit workflow. Verify protocol invariants, analyze economic attack surfaces (flash loans, MEV, sandwich attacks, oracle manipulation), and conduct internet research (OSINT) on the protocol and similar projects. Integrate all findings into a single output document.
 
-## Prerequisites
+## Gate Check (MANDATORY)
 
-1. **Prior audit steps completed**: Steps 1-7 outputs must exist in `~/.solidity-analyzer/audits/{protocol}/`.
-2. **Contract source fetched**: Source code at `~/.solidity-analyzer/contracts/{chainId}/{address}/source/`.
-3. **Foundry installed**: Verify with `forge --version`. Required for invariant test examples.
-4. **Internet access**: Required for OSINT research in Step 8.5.
+Before starting, verify prior steps are complete. **Do NOT proceed if any check fails.**
+
+```bash
+PROTOCOL="{protocol}"
+
+# Steps 1-6 outputs must exist (Step 7 optional — only if proxy)
+for step in 01-source-analysis 02-interface-analysis 03-fund-flow-risk 04-static-analysis 05-storage-analysis 06-manual-review; do
+  ls ~/.solidity-analyzer/audits/$PROTOCOL/${step}.md || echo "BLOCKED: ${step} not complete"
+done
+
+# Foundry for invariant tests
+forge --version || echo "BLOCKED: Foundry not installed"
+```
+
+**Internet access** is required for OSINT research (Step 8.5).
 
 ## Output
 

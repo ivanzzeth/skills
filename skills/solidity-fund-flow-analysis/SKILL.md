@@ -14,14 +14,22 @@ description: >
 
 Fund flow risk analysis for smart contract security audits. This is Step 3 of the audit workflow -- it produces a comprehensive fund flow risk document covering privileged account access, user fund paths, and per-function risk assessment.
 
-## Prerequisites
+## Gate Check (MANDATORY)
 
-Complete **solidity-interface-analysis** (Step 2) before running this skill. Step 2 provides:
-- Contract architecture diagram
-- Privileged address inventory (verified on-chain)
-- External call dependency map
+Before starting, verify prior steps are complete. **Do NOT proceed if any check fails.**
 
-Read the Step 2 output at `~/.solidity-analyzer/audits/{protocol}/02-interface-analysis.md` before proceeding.
+```bash
+PROTOCOL="{protocol}"
+
+# Steps 1-2 outputs must exist
+ls ~/.solidity-analyzer/audits/$PROTOCOL/01-source-analysis.md || echo "BLOCKED: Step 1 not complete"
+ls ~/.solidity-analyzer/audits/$PROTOCOL/02-interface-analysis.md || echo "BLOCKED: Step 2 (interface analysis) not complete"
+
+# Verify Step 2 has no unresolved items
+grep -riE "need.*verif|TBD|TODO|unknown|\?\s*\|" ~/.solidity-analyzer/audits/$PROTOCOL/02-interface-analysis.md && echo "BLOCKED: Step 2 has unverified items"
+```
+
+Step 2 provides the privileged address inventory, architecture diagram, and external call map that this skill depends on. Read `02-interface-analysis.md` before proceeding.
 
 ## Output
 

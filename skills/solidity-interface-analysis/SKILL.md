@@ -19,9 +19,21 @@ Perform Step 2 of a solidity audit: smart contract interface and architecture an
 
 Activate this skill when the user requests interface analysis, architecture analysis, privileged address analysis, external call risk assessment, or permission chain tracing for a smart contract or protocol.
 
-## Prerequisites
+## Gate Check (MANDATORY)
 
-The `etherscan-contract-fetcher` skill must have already fetched the contract source code. Verify that `~/.solidity-analyzer/audits/{protocol}/` exists and contains fetched source files before proceeding. If sources are missing, instruct the user to run the fetcher first.
+Before starting, verify prior steps are complete. **Do NOT proceed if any check fails.**
+
+```bash
+PROTOCOL="{protocol}"
+CHAIN_ID="{chainId}"
+ADDRESS="{address}"
+
+# Step 1 output must exist
+ls ~/.solidity-analyzer/contracts/$CHAIN_ID/$ADDRESS/source/*.sol || echo "BLOCKED: Run etherscan-contract-fetcher first"
+ls ~/.solidity-analyzer/audits/$PROTOCOL/01-source-analysis.md || echo "BLOCKED: Step 1 (source analysis) not complete"
+```
+
+If blocked, stop and instruct the user to complete the missing step first.
 
 ## Key Analysis Requirements
 

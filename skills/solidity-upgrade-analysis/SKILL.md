@@ -9,6 +9,23 @@ description: Analyze upgrade risks for upgradeable contracts — storage collisi
 
 Use this skill only for upgradeable contracts that follow EIP-1967, UUPS, Transparent Proxy, or Beacon Proxy patterns. Do not apply to immutable contracts or non-proxy deployments.
 
+## Gate Check (MANDATORY)
+
+Before starting, verify prior steps are complete. **Do NOT proceed if any check fails.**
+
+```bash
+PROTOCOL="{protocol}"
+
+# Steps 1-5 must exist (upgrade analysis depends on storage layout from Step 5)
+ls ~/.solidity-analyzer/audits/$PROTOCOL/05-storage-analysis.md || echo "BLOCKED: Step 5 (storage analysis) not complete"
+
+# Proxy must have been detected in Step 2 or Step 5
+grep -i "proxy\|EIP-1967\|implementation" ~/.solidity-analyzer/audits/$PROTOCOL/05-storage-analysis.md || echo "WARNING: No proxy detected — this skill may not apply"
+
+# Foundry must be available
+forge --version || echo "BLOCKED: Foundry not installed"
+```
+
 ## Checklist
 
 ### A. Storage Layout Compatibility

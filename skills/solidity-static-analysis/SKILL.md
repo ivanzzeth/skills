@@ -14,12 +14,29 @@ description: >
 
 Step 4 of the Solidity audit workflow. Run Slither against fetched contract sources, triage findings by severity, and produce a structured report.
 
-## Prerequisites
+## Gate Check (MANDATORY)
 
-1. **Slither installed**: Verify with `slither --version`. Install with `pip install slither-analyzer` if missing.
-2. **Contract source fetched**: Source code must exist at `~/.solidity-analyzer/contracts/{chainId}/{address}/source/`.
-3. **Correct solc version**: The project's required Solidity compiler version must be available. Use `solc-select` to manage versions.
-4. **Output directory exists**: Ensure `~/.solidity-analyzer/audits/{protocol}/` exists before writing reports.
+Before starting, verify prior steps and tools are ready. **Do NOT proceed if any check fails.**
+
+```bash
+PROTOCOL="{protocol}"
+CHAIN_ID="{chainId}"
+ADDRESS="{address}"
+
+# Tool check
+slither --version || echo "BLOCKED: Install slither — pip install slither-analyzer"
+
+# Steps 1-3 outputs must exist (static analysis uses architecture + fund flow context)
+ls ~/.solidity-analyzer/contracts/$CHAIN_ID/$ADDRESS/source/*.sol || echo "BLOCKED: No source code fetched"
+ls ~/.solidity-analyzer/audits/$PROTOCOL/02-interface-analysis.md || echo "BLOCKED: Step 2 not complete"
+ls ~/.solidity-analyzer/audits/$PROTOCOL/03-fund-flow-risk.md || echo "BLOCKED: Step 3 not complete"
+```
+
+**Why Steps 2-3 matter**: Understanding architecture and fund flows is essential for triaging Slither findings. Without context, false positives cannot be identified.
+
+Additional requirements:
+- **Correct solc version**: Use `solc-select` to manage versions.
+- **Output directory**: `~/.solidity-analyzer/audits/{protocol}/` must exist.
 
 ## Commands
 

@@ -9,9 +9,23 @@ Perform storage layout analysis and live on-chain state verification for Solidit
 
 All outputs go to `~/.solidity-analyzer/audits/{protocol}/`.
 
-## When to use
+## Gate Check (MANDATORY)
 
-Activate this skill when the user requests storage layout inspection, proxy slot verification, on-chain state snapshots, or storage collision analysis for Solidity contracts.
+Before starting, verify prior steps are complete. **Do NOT proceed if any check fails.**
+
+```bash
+PROTOCOL="{protocol}"
+CHAIN_ID="{chainId}"
+ADDRESS="{address}"
+
+# Source code and prior steps must exist
+ls ~/.solidity-analyzer/contracts/$CHAIN_ID/$ADDRESS/source/*.sol || echo "BLOCKED: No source code fetched"
+ls ~/.solidity-analyzer/audits/$PROTOCOL/02-interface-analysis.md || echo "BLOCKED: Step 2 not complete"
+ls ~/.solidity-analyzer/audits/$PROTOCOL/04-static-analysis.md || echo "BLOCKED: Step 4 not complete"
+
+# Foundry must be available
+forge --version || echo "BLOCKED: Foundry not installed"
+```
 
 ## RPC Configuration
 

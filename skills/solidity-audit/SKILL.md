@@ -19,12 +19,19 @@ Smart contract security audit workflow. Orchestrates a 3-phase process using com
 
 This skill delegates specialized work to:
 
-| Skill | Used In | Purpose |
-|-------|---------|---------|
-| **etherscan-contract-fetcher** | Step 1 | Fetch verified source code |
-| **solidity-vulnerability-checklist** | Steps 4, 6 | Top 5 vulnerability checks + Slither |
-| **solidity-poc** | Step 9 | Foundry fork-based POC development |
-| **eip155-chains** | All steps | RPC endpoints via EVM Gateway |
+| Skill | Step | Purpose |
+|-------|------|---------|
+| **eip155-chains** | All | RPC endpoints via EVM Gateway |
+| **etherscan-contract-fetcher** | 1 | Fetch verified source code + proxy detection |
+| **solidity-interface-analysis** | 2 | Architecture diagrams, privileged addresses, call risks |
+| **solidity-fund-flow-analysis** | 3 | Fund flow paths, risk matrix |
+| **solidity-static-analysis** | 4 | Slither workflow, detector config, finding triage |
+| **solidity-vulnerability-checklist** | 4, 6 | Top 5 vulnerability checks |
+| **solidity-storage-analysis** | 5 | Storage layout, EIP-1967 slots, live state |
+| **solidity-upgrade-analysis** | 7 | Storage collision, initializer, proxy patterns |
+| **solidity-economic-analysis** | 8+8.5 | Invariants, flash loan/MEV/oracle attacks, OSINT |
+| **solidity-poc** | 9 | Foundry fork-based POC development |
+| **solidity-audit-report** | 10+11 | Final report + executive briefing |
 
 ## Workspace
 

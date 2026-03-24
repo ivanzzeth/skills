@@ -53,16 +53,27 @@ Confirm all intermediate documents exist before generating the report:
 PROTOCOL="{protocol}"
 AUDIT_DIR="$HOME/.solidity-analyzer/audits/$PROTOCOL"
 
-# Required intermediate documents
-ls -la "$AUDIT_DIR"/01-INTERFACE-ARCH.md
-ls -la "$AUDIT_DIR"/02-FUND-FLOW.md
-ls -la "$AUDIT_DIR"/03-STATIC-ANALYSIS.md
-ls -la "$AUDIT_DIR"/04-STORAGE-LAYOUT.md
-ls -la "$AUDIT_DIR"/05-INVARIANTS-ECON.md
-ls -la "$AUDIT_DIR"/06-POC-RESULTS.md
+# Required intermediate documents (file names must match other skills' outputs)
+for doc in \
+  01-source-analysis.md \
+  02-interface-analysis.md \
+  03-fund-flow-risk.md \
+  04-static-analysis.md \
+  05-storage-analysis.md \
+  06-manual-review.md \
+  08-invariant-economic.md \
+  09-poc-results.md; do
+  ls "$AUDIT_DIR/$doc" 2>/dev/null || echo "BLOCKED: $doc not found"
+done
+
+# Optional (only if proxy detected)
+ls "$AUDIT_DIR/07-upgrade-analysis.md" 2>/dev/null || echo "INFO: No upgrade analysis (skip if not a proxy)"
+
+# Verify no unresolved items across all documents
+grep -riE "need.*verif|TBD|TODO|unknown|\?\s*\|" "$AUDIT_DIR"/*.md && echo "BLOCKED: Unverified items found — fix before generating report"
 ```
 
-If any are missing, stop and inform the user which steps need to be completed first.
+If any required document is missing or has unresolved items, stop and inform the user which steps need to be completed first.
 
 ### Step 2: Generate AUDIT-REPORT.md
 
