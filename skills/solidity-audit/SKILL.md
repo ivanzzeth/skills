@@ -152,6 +152,61 @@ Non-technical summary. Focus: fund safety, privilege risks, actionable recommend
    forge init poc --no-git
    ```
 
+## Team Collaboration (Optional)
+
+If the runtime environment supports team/agent spawning (e.g., Claude Code with Agent tool), leverage parallel execution to speed up the audit. **This is optional** — if team creation is not available, run all steps sequentially as described above.
+
+### Recommended Team Structure
+
+| Teammate | Assigned Steps | Skill | Parallelizable? |
+|----------|---------------|-------|-----------------|
+| **source-fetcher** | Step 0-1 | etherscan-contract-fetcher | — (must run first) |
+| **arch-analyst** | Step 2 | solidity-interface-analysis | After Step 1 |
+| **fund-flow-analyst** | Step 3 | solidity-fund-flow-analysis | After Step 2 |
+| **static-analyst** | Step 4 | solidity-static-analysis | After Step 3 |
+| **storage-analyst** | Step 5 | solidity-storage-analysis | **Parallel with Step 4** |
+| **code-reviewer** | Step 6 | solidity-vulnerability-checklist | After Steps 4+5 |
+| **upgrade-analyst** | Step 7 | solidity-upgrade-analysis | **Parallel with Step 6** (if proxy) |
+| **econ-analyst** | Step 8+8.5 | solidity-economic-analysis | After Step 6 |
+| **poc-developer** | Step 9 | solidity-poc | After Step 8 |
+| **report-writer** | Steps 10+11 | solidity-audit-report | After Step 9 |
+
+### Parallelization Opportunities
+
+```
+Step 0-1 (sequential)
+  ↓
+Step 2 (sequential)
+  ↓
+Step 3 (sequential)
+  ↓
+Step 4 ──┐
+         ├── parallel
+Step 5 ──┘
+  ↓
+Step 6 ──┐
+         ├── parallel (if proxy detected)
+Step 7 ──┘
+  ↓
+Step 8+8.5 (sequential)
+  ↓
+Step 9 (sequential)
+  ↓
+Steps 10+11 (sequential)
+```
+
+### How to Spawn
+
+When spawning teammates, include in the prompt:
+1. The protocol name and contract address(es)
+2. The chain ID
+3. The specific skill to use
+4. The path to prior step outputs for context
+
+Each teammate runs its own Gate Check before starting. If a gate check fails, the teammate reports back and waits — it does not proceed with incomplete inputs.
+
+**Do NOT force team creation** if the tool does not support it. A single-agent sequential workflow produces the same results, just slower.
+
 ## Finding Severity Classification
 
 | Severity | Criteria |
