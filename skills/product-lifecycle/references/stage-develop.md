@@ -14,6 +14,18 @@ If this is a new service:
 - Create initial directory structure
 - Add Makefile / build scripts
 
+### IRON RULE: Base Service First
+
+When working on multi-service features (e.g. auth integration into evm-gateway):
+
+1. **Base service** (auth, SDK): code → test → build → deploy to minikube → verify end-to-end
+2. **ONLY THEN** start dependent service changes (evm-gateway, frontends)
+
+Never do cross-service changes in parallel. If the base service isn't verified stable,
+debugging dependent service integration is impossible.
+
+This applies to: auth service, SDK libraries, shared infrastructure.
+
 ### Step 2: Implement vertical slices
 
 Work through GitHub Issues in dependency order. For each issue:
