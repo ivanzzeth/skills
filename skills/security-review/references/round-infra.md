@@ -40,7 +40,7 @@ securityContext:
 ```
 
 - [ ] `runAsNonRoot: true` set
-- [ ] `readOnlyRootFilesystem: true` (use emptyDir for /tmp if needed)
+- [ ] `readOnlyRootFilesystem: true` (**must add emptyDir mounts for /tmp and any writable paths** — Go runtime, casbin, SQLite all need writable /tmp)
 - [ ] `allowPrivilegeEscalation: false`
 - [ ] All capabilities dropped
 - [ ] No `privileged: true` containers
