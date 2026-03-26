@@ -1,21 +1,59 @@
 ---
 name: k3s-ops
 description: >
-  K3s hybrid cloud cluster operations — node management, service deployment, MetalLB/Traefik
-  ingress, cert-manager TLS, private Docker registry, CI/CD with Woodpecker, resource limits,
-  scheduling strategies, and troubleshooting. Designed for cross-cloud/cross-country clusters
-  connected via WireGuard mesh VPN (NetBird). This skill should be used when deploying,
-  managing, or troubleshooting K3s clusters, Kubernetes services, ingress, TLS certificates,
-  CI/CD pipelines, or container registry operations.
+  K3s hybrid cloud cluster operations AND local minikube dev environment — node management,
+  service deployment, MetalLB/Traefik ingress, cert-manager TLS, private Docker registry,
+  CI/CD with Woodpecker, resource limits, scheduling strategies, minikube local dev setup,
+  and troubleshooting. Designed for cross-cloud/cross-country clusters connected via WireGuard
+  mesh VPN (NetBird), with a parallel local minikube environment for development.
+  This skill should be used when deploying, managing, or troubleshooting K3s clusters,
+  minikube local environments, Kubernetes services, ingress, TLS certificates, CI/CD pipelines,
+  or container registry operations.
   Triggers include: "k3s", "kubernetes", "kubectl", "helm", "deploy to k3s", "k3s cluster",
-  "ingress", "traefik", "metallb", "cert-manager", "woodpecker", "CI/CD pipeline",
-  "docker registry", "k8s deployment", "pod", "service expose", "TLS certificate",
-  "部署", "集群", "K3s运维", "容器编排".
+  "minikube", "local dev", "local environment", "本地环境", "ingress", "traefik", "metallb",
+  "cert-manager", "woodpecker", "CI/CD pipeline", "docker registry", "k8s deployment", "pod",
+  "service expose", "TLS certificate", "部署", "集群", "K3s运维", "容器编排".
 ---
 
 # k3s-ops
 
-Hybrid cloud K3s cluster operations. Covers node setup, service deployment, ingress stack, CI/CD, resource management, and troubleshooting for cross-cloud clusters connected via WireGuard mesh VPN.
+Hybrid cloud K3s cluster operations + local minikube dev environment. Covers node setup, service deployment, ingress stack, CI/CD, resource management, and troubleshooting.
+
+## IRON RULE: Environment Safety
+
+Two independent Kubernetes environments exist. **Mixing them up can destroy production.**
+
+| Environment | kubectl context | Cluster | Purpose |
+|-------------|----------------|---------|---------|
+| **Production** | `default` | K3s (Vultr Tokyo, 2 nodes) | Live services, real users |
+| **Local Dev** | `minikube` | Minikube (single node, local) | Development, testing |
+
+### Mandatory Rules
+
+1. **ALWAYS use `--context` flag** — never rely on `current-context`
+   ```bash
+   kubectl --context minikube get pods     # local dev
+   kubectl --context default get pods      # production
+   ```
+2. **Before ANY kubectl/helm command**: confirm which environment you're targeting
+3. **NEVER apply production manifests directly to minikube** — they have incompatible:
+   - `nodeSelector` (production: `vultr-tokyo`, minikube: none)
+   - Image references (production: `registry.default.svc.cluster.local:5000/`, minikube: local images)
+   - Ingress class (production: `traefik`, minikube: `nginx`)
+   - TLS (production: cert-manager Let's Encrypt, minikube: none/self-signed)
+4. **Each service has separate manifests**: `deploy/k8s/` = production, `deploy/minikube/` = local dev
+5. **When user says "deploy" without specifying environment**: ASK which one
+
+### Quick Context Check
+
+```bash
+# See all contexts and which is current
+kubectl config get-contexts
+# Expected output:
+#   CURRENT   NAME       CLUSTER    AUTHINFO   NAMESPACE
+#   *         default    default    default              ← production k3s
+#             minikube   minikube   minikube   default   ← local dev
+```
 
 ## IMPORTANT: Read Cluster Inventory First
 
@@ -32,12 +70,15 @@ The inventory is project-specific (not in this skill). If it doesn't exist, scan
 cluster first and create it:
 
 ```bash
-kubectl get deployments -A
-kubectl get svc -A
-kubectl get ingress -A
-kubectl get statefulsets -A
-kubectl get cronjobs -A
-docker ps --format "{{.Names}}\t{{.Image}}\t{{.Ports}}"  # for non-K8s services
+# Production
+kubectl --context default get deployments -A
+kubectl --context default get svc -A
+kubectl --context default get ingress -A
+
+# Local dev
+kubectl --context minikube get deployments -A
+kubectl --context minikube get svc -A
+kubectl --context minikube get ingress -A
 ```
 
 ## Cluster Architecture
@@ -390,7 +431,160 @@ tolerations:
 
 **Fix**: `sudo ufw disable` on all k3s nodes. Use cloud provider firewalls or k8s network policies.
 
-## Key Lessons
+## Minikube Local Dev Environment
+
+### Overview
+
+Minikube provides a single-node local Kubernetes cluster for development and testing. It mirrors the production k3s environment but with simplified infrastructure (no MetalLB, no cert-manager, no Woodpecker CI).
+
+### Prerequisites
+
+```bash
+# Verify minikube is running
+minikube status
+
+# If not running:
+minikube start --cpus=4 --memory=8192 --driver=docker
+```
+
+### Minikube Addons
+
+```bash
+# Enable nginx ingress (replaces production Traefik)
+minikube addons enable ingress
+
+# Enable registry (optional, alternative to `minikube image load`)
+minikube addons enable registry
+
+# Enable metrics-server (for kubectl top)
+minikube addons enable metrics-server
+```
+
+### Infrastructure Setup (PostgreSQL + Redis)
+
+```bash
+# Add Helm repos (same as production)
+helm --kube-context minikube repo add bitnami https://charts.bitnami.com/bitnami
+helm --kube-context minikube repo update
+
+# PostgreSQL
+helm --kube-context minikube install postgres bitnami/postgresql \
+  --set auth.postgresPassword=devpassword \
+  --set primary.persistence.size=1Gi
+
+# Redis
+helm --kube-context minikube install redis bitnami/redis \
+  --set auth.password=devpassword \
+  --set master.persistence.size=1Gi \
+  --set replica.replicaCount=0
+```
+
+### Image Build Workflow
+
+Production uses Woodpecker CI. Local dev builds images directly:
+
+```bash
+# Option 1: Build inside minikube's Docker daemon (fastest, no push)
+eval $(minikube docker-env)
+cd /path/to/service
+docker build -t <service>:dev -f Dockerfile .
+eval $(minikube docker-env -u)
+
+# Option 2: Build on host, load into minikube
+docker build -t <service>:dev -f Dockerfile .
+minikube image load <service>:dev
+```
+
+**Important**: Deployments must use `imagePullPolicy: Never` or `IfNotPresent` for local images.
+
+### Manifest Differences (Production vs Minikube)
+
+When creating minikube manifests from production ones, apply these changes:
+
+| Field | Production | Minikube |
+|-------|-----------|---------|
+| `nodeSelector` | `topology.kubernetes.io/zone: vultr-tokyo` | **Remove entirely** |
+| `replicas` | 2 | 1 |
+| `image` | `registry.default.svc.cluster.local:5000/<name>:<tag>` | `<name>:dev` |
+| `imagePullPolicy` | `IfNotPresent` | `Never` (for local images) |
+| `resources.requests` | Tuned for production | Lower or remove |
+| `resources.limits` | Tuned for production | Lower or remove |
+| Ingress `ingressClassName` | `traefik` | `nginx` |
+| Ingress TLS | cert-manager + Let's Encrypt | Remove or self-signed |
+| Ingress host | `*.web3gate.xyz` | `*.local.web3gate.xyz` |
+| Config secrets | Kubernetes Secret (production values) | Kubernetes Secret (dev values) |
+
+### Local Domain Setup
+
+Add to `/etc/hosts` (use `minikube ip` for the IP):
+
+```bash
+echo "$(minikube ip) auth.local.web3gate.xyz account.local.web3gate.xyz evm.local.web3gate.xyz app.local.web3gate.xyz" | sudo tee -a /etc/hosts
+```
+
+### Accessing Services
+
+```bash
+# Port-forward (simplest, no ingress needed)
+kubectl --context minikube port-forward svc/web3-opb-auth 8700:8700
+kubectl --context minikube port-forward svc/web3-opb-auth-frontend 8080:8080
+
+# Via minikube service (opens browser)
+minikube service web3-opb-auth --url
+
+# Via ingress (requires ingress addon + /etc/hosts)
+curl http://auth.local.web3gate.xyz/health
+```
+
+### Config Secret for Local Dev
+
+Create a dev config secret (never reuse production secrets):
+
+```bash
+# Create config.yaml for local dev (from config.example.yaml, with dev values)
+kubectl --context minikube create secret generic web3-opb-auth-config \
+  --from-file=config.yaml=config.dev.yaml
+```
+
+### Common Minikube Commands
+
+```bash
+# Check cluster status
+minikube status
+
+# View dashboard
+minikube dashboard
+
+# SSH into minikube node
+minikube ssh
+
+# Get minikube IP (for /etc/hosts)
+minikube ip
+
+# View logs
+kubectl --context minikube logs deployment/<name> -f
+
+# Restart from scratch
+minikube delete && minikube start --cpus=4 --memory=8192
+```
+
+### Minikube vs Production Comparison
+
+```
+Production (k3s):
+  Internet → DNS → MetalLB → Traefik (hostNetwork) → Service → Pod
+  TLS: cert-manager (Let's Encrypt DNS-01)
+  Registry: in-cluster registry:5000 (NodePort 30500)
+  CI/CD: Woodpecker (git tag → build → push → deploy)
+
+Local Dev (minikube):
+  localhost → /etc/hosts → minikube IP → nginx-ingress → Service → Pod
+  TLS: none (HTTP) or self-signed
+  Registry: minikube image load (no registry needed)
+  CI/CD: manual (docker build → minikube image load → kubectl apply)
+```
+
+## Key Lessons (Production K3s)
 
 1. **Use public IP as --node-ip** when nodes have stable public IPs — avoids overlay network instability
 2. **Flannel wireguard-native port conflicts with NetBird** — use `--flannel-conf` with `"ListenPort": 51821` (NOT `--flannel-wireguard-port`, that flag doesn't exist)
