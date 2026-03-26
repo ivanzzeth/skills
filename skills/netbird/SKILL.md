@@ -142,7 +142,9 @@ Traffic goes through the WireGuard tunnel to reach the target peer. Localhost-to
 
 ### NetBird as K3s/K8s Network Layer
 
-Use NetBird to connect K3s nodes across clouds/locations:
+> **WARNING: Overlay on Overlay — unstable.** Using NetBird IP as `--node-ip` with Flannel means Flannel's overlay (VXLAN/WireGuard) runs on top of NetBird's WireGuard tunnel. This double encapsulation causes frequent disconnections, high latency (2-3s cross-node), and difficult-to-debug failures. **Not recommended for production.**
+
+**Legacy approach** (NetBird overlay — unstable, not recommended):
 
 ```bash
 # K3s server install — use NetBird IP as node IP
@@ -150,19 +152,40 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
   --node-ip=<NETBIRD_IP> \
   --flannel-iface=wt0 \
   --tls-san=<NETBIRD_IP>" sh -
-
-# K3s agent install
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="agent \
-  --node-ip=<NETBIRD_IP> \
-  --flannel-iface=wt0" \
-  K3S_URL=https://<MASTER_NETBIRD_IP>:6443 \
-  K3S_TOKEN=<TOKEN> sh -
 ```
 
-Key flags:
-- `--node-ip=<NETBIRD_IP>`: Use NetBird IP (100.x.x.x) so nodes communicate over VPN
-- `--flannel-iface=wt0`: Route pod traffic over NetBird interface
-- CNI recommendation: **Calico over NetBird** is more stable than Flannel for cross-cloud topology
+**Recommended approach** (public IP + flannel wireguard-native):
+
+Use public IPs as `--node-ip` with Flannel WireGuard-Native for a single layer of WireGuard encryption. NetBird is retained for Teleport SSH access and non-k3s node connectivity, but k3s traffic goes directly over public IP.
+
+```bash
+# K3s server install — public IP direct
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
+  --cluster-init \
+  --node-ip=<PUBLIC_IP> \
+  --node-external-ip=<PUBLIC_IP> \
+  --flannel-backend=wireguard-native \
+  --flannel-conf=/etc/rancher/k3s/flannel.json \
+  --tls-san=<PUBLIC_IP> \
+  --disable=servicelb" sh -
+```
+
+Custom flannel config (`/etc/rancher/k3s/flannel.json`) — port 51821 avoids conflict with NetBird's WireGuard on 51820:
+
+```json
+{
+  "Network": "10.42.0.0/16",
+  "EnableIPv4": true,
+  "EnableIPv6": false,
+  "Backend": {
+    "Type": "wireguard",
+    "PersistentKeepalive": 25,
+    "ListenPort": 51821
+  }
+}
+```
+
+See the `k3s-ops` skill for full setup details.
 
 ### NetBird Kubernetes Operator
 

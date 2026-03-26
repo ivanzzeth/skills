@@ -30,14 +30,15 @@ Hybrid cloud K3s cluster operations. Covers node setup, service deployment, ingr
          └───┬────┘ └───┬────┘ └──┬─────────┘
              │          │         │
              └──────────┼─────────┘
-                  WireGuard Mesh
-                  (100.64.0.0/10)
+              Flannel WireGuard-Native
+              (public IP direct, port 51821)
 ```
 
 Components:
 - **K3s server** (single master with `--cluster-init` for etcd, expandable to HA)
 - **K3s agents** (workers across cloud providers and local machines)
-- **NetBird mesh VPN** for inter-node communication
+- **Flannel WireGuard-Native** for encrypted pod network over public IPs (ChaCha20-Poly1305)
+- **NetBird mesh VPN** retained for Teleport SSH access and non-k3s node connectivity
 - **MetalLB + Traefik + cert-manager** for public service exposure
 
 ## Node Setup
@@ -47,27 +48,49 @@ Components:
 ```bash
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
   --cluster-init \
-  --node-ip=<NETBIRD_IP> \
+  --node-ip=<PUBLIC_IP> \
   --node-external-ip=<PUBLIC_IP> \
-  --flannel-iface=wt0 \
-  --tls-san=<NETBIRD_IP> \
+  --flannel-backend=wireguard-native \
+  --flannel-conf=/etc/rancher/k3s/flannel.json \
+  --tls-san=<PUBLIC_IP> \
   --disable=servicelb" sh -
 ```
 
 Key flags:
 - `--cluster-init`: Enable embedded etcd (HA-ready, can add masters later with zero downtime)
-- `--node-ip=<NETBIRD_IP>`: Inter-node communication over VPN
+- `--node-ip=<PUBLIC_IP>`: Use public IP for inter-node communication (not VPN IP — avoids overlay instability)
 - `--node-external-ip=<PUBLIC_IP>`: Advertised public IP for LoadBalancer services
-- `--flannel-iface=wt0`: Route pod traffic over NetBird interface
-- `--disable=servicelb`: Use MetalLB instead (ServiceLB cannot bind to public IP when node-ip is VPN IP)
+- `--flannel-backend=wireguard-native`: Encrypted pod network via WireGuard (ChaCha20-Poly1305)
+- `--flannel-conf=/etc/rancher/k3s/flannel.json`: Custom config for WireGuard port (see below)
+- `--disable=servicelb`: Use MetalLB instead for flexible multi-node IP management
+
+### Flannel WireGuard Config
+
+Create `/etc/rancher/k3s/flannel.json` on **every node** (server and agent):
+
+```json
+{
+  "Network": "10.42.0.0/16",
+  "EnableIPv4": true,
+  "EnableIPv6": false,
+  "Backend": {
+    "Type": "wireguard",
+    "PersistentKeepalive": 25,
+    "ListenPort": 51821
+  }
+}
+```
+
+> **Port 51821** avoids conflict with NetBird WireGuard (default 51820). The `--flannel-wireguard-port` flag does NOT exist — use `--flannel-conf` instead.
 
 ### Install K3s Agent (Worker)
 
 ```bash
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="agent \
-  --node-ip=<NETBIRD_IP> \
-  --flannel-iface=wt0" \
-  K3S_URL=https://<MASTER_NETBIRD_IP>:6443 \
+  --node-ip=<PUBLIC_IP> \
+  --node-external-ip=<PUBLIC_IP> \
+  --flannel-conf=/etc/rancher/k3s/flannel.json" \
+  K3S_URL=https://<MASTER_PUBLIC_IP>:6443 \
   K3S_TOKEN=<TOKEN> sh -
 ```
 
@@ -92,7 +115,7 @@ For each new node:
 
 | Component | Reason |
 |-----------|--------|
-| **MetalLB** (L2 mode) | ServiceLB hostPort binds to `--node-ip` (VPN IP), cannot bind to public IP. MetalLB L2 properly advertises public IPs via ARP. |
+| **MetalLB** (L2 mode) | Supports multiple IP pools and fine-grained IP allocation across nodes. MetalLB L2 properly advertises public IPs via ARP. |
 | **Traefik** (k3s built-in) | Ingress controller with `hostNetwork: true` for zero-overhead routing. |
 | **cert-manager** (DNS-01) | HTTP-01 fails in hybrid clusters (hairpin NAT, DNS issues, proxy leaks). DNS-01 works regardless of network topology. |
 
@@ -141,7 +164,7 @@ spec:
       kubernetes.io/hostname: <MASTER_NODE_NAME>
 ```
 
-**Why hostNetwork**: Default pod network adds ~300ms overhead (iptables DNAT + flannel vxlan). With `hostNetwork: true`, same-region latency drops from ~730ms to ~24ms.
+**Why hostNetwork**: Default pod network adds overhead (iptables DNAT). With `hostNetwork: true`, Traefik listens directly on all host interfaces. Same-region cross-node latency with flannel wireguard-native is ~0.6ms.
 
 ### Install cert-manager (DNS-01)
 
@@ -220,55 +243,16 @@ docker push localhost:30500/my-app:v1.0
 
 ## CI/CD with Woodpecker
 
-### Architecture
+> **Full details:** See `/woodpecker-ci` skill for pipeline management, API access,
+> shared CI scripts, templates, and troubleshooting.
 
-- **Woodpecker Server**: In k3s (pinned to worker node)
-- **Woodpecker Agent**: Docker Compose on the same worker (not in k3s — needs Docker socket access)
-
-### Pipeline (triggered on git tag)
-
-```yaml
-# .woodpecker.yaml
-steps:
-  - name: test
-    image: golang:1.24-alpine
-    commands:
-      - go test ./...
-
-  - name: build-push
-    image: docker:cli
-    environment:
-      DOCKER_BUILDKIT: "0"  # Legacy builder uses daemon proxy correctly
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    commands:
-      - docker build -t localhost:30500/my-app:${CI_COMMIT_TAG} .
-      - docker push localhost:30500/my-app:${CI_COMMIT_TAG}
-
-  - name: deploy
-    image: alpine/k8s:1.32.4  # Runs as root — avoids .netrc permission issues
-    commands:
-      - kubectl set image deployment/my-app my-app=registry.default.svc.cluster.local:5000/my-app:${CI_COMMIT_TAG}
-      - kubectl rollout status deployment/my-app --timeout=120s
-```
-
-### Key Configuration Notes
-
-- Use `docker:cli` not `plugins/docker` — avoids Docker API version mismatch
-- Use `alpine/k8s` not `bitnami/kubectl` — non-root images cause `.netrc` permission denied
-- Set `DOCKER_BUILDKIT=0` — BuildKit ignores daemon proxy for metadata fetch
-- Set Docker daemon DNS: `/etc/docker/daemon.json` → `{"dns": ["8.8.8.8", "1.1.1.1"]}` (NetBird overrides host DNS)
-
-### Agent Resource Limits
-
-```yaml
-# Docker Compose environment for Woodpecker agent
-environment:
-  WOODPECKER_MAX_WORKFLOWS: "1"           # One pipeline at a time
-  WOODPECKER_BACKEND_DOCKER_LIMIT_MEM: "1073741824"    # 1GB per step
-  WOODPECKER_BACKEND_DOCKER_LIMIT_CPU_QUOTA: "100000"  # 1 CPU core per step
-  WOODPECKER_BACKEND_DOCKER_LIMIT_CPU_SET: "1"         # Pin to core 1 (core 0 for k3s)
-```
+Summary:
+- **Server**: K3s deployment `woodpecker-server`, gRPC NodePort 30900
+- **Agent**: Docker Compose on k3s-worker-1, pinned to CPU core 1 (core 0 for k3s)
+- **Trigger**: Git tag → test → build-push → deploy (3-step pipeline)
+- **API Token**: `$WOODPECKER_TOKEN` env var (local machine `~/.bashrc`)
+- **UI**: https://ci.web3gate.xyz
+- **Shared scripts**: `linux-setup/ci/` (build.sh, deploy.sh, services/*.conf)
 
 ## Resource Management
 
@@ -321,9 +305,9 @@ tolerations:
 
 ### Scheduling Best Practices
 
-- **Latency-sensitive services**: Pin to same region as ingress node. Cross-region pod network adds 2-3s latency.
+- **Latency-sensitive services**: Pin to same region as ingress node. Same-region flannel wireguard-native latency ~0.6ms. Cross-region can add seconds.
 - **Traefik**: Pin to master with `hostNetwork: true`. Must be same region as backend pods.
-- **Ingress + backend = same region**: Never route latency-sensitive traffic cross-region through flannel.
+- **Ingress + backend = same region**: Never route latency-sensitive traffic cross-region.
 - **Compute-heavy workloads**: Schedule on high-perf nodes or run outside k3s via Docker.
 
 ## Troubleshooting
@@ -344,9 +328,9 @@ tolerations:
 
 ### ServiceLB Shows `<pending>` EXTERNAL-IP
 
-**Cause**: ServiceLB hostPort binds to `--node-ip` (VPN IP), not public IP.
+**Cause**: ServiceLB is disabled (`--disable=servicelb`). MetalLB handles LoadBalancer IPs.
 
-**Fix**: Use MetalLB L2 mode instead. MetalLB advertises public IPs via ARP on the physical interface.
+**Fix**: Ensure MetalLB is installed with correct IPAddressPool. If not using MetalLB, remove `--disable=servicelb`.
 
 ### Proxy Environment Leaks into Pods
 
@@ -385,13 +369,17 @@ tolerations:
 
 ## Key Lessons
 
-1. **NetBird + k3s = DNS config required** — always add public DNS upstream
-2. **Never HTTP-01 in hybrid clusters** — always DNS-01
-3. **MetalLB over ServiceLB** — when `--node-ip` is VPN IP
-4. **Disable UFW on k3s nodes** — use cloud firewalls instead
-5. **hostNetwork for Traefik** — eliminates ~300ms pod network overhead
-6. **CPU pinning for CI** — protect online services from build load
-7. **Proxy leaks affect everything** — override in each deployment
-8. **DOCKER_BUILDKIT=0** — when proxy is needed for image pulls
-9. **Root container images for CI deploy steps** — avoids permission issues
-10. **Ingress + backend = same region** — cross-region flannel adds 2-3s
+1. **Use public IP as --node-ip** when nodes have stable public IPs — avoids overlay network instability
+2. **Flannel wireguard-native port conflicts with NetBird** — use `--flannel-conf` with `"ListenPort": 51821` (NOT `--flannel-wireguard-port`, that flag doesn't exist)
+3. **Changing --node-ip requires etcd member update** — update peer URL via `etcdctl member update` first
+4. **Changing flannel backend requires cleaning old interfaces** — `ip link delete flannel.1` and clear routes before restart
+5. **Never HTTP-01 in hybrid clusters** — always DNS-01
+6. **MetalLB for flexible IP management** — supports multi-node IP pools
+7. **Disable UFW on k3s nodes** — use cloud firewalls instead
+8. **hostNetwork for Traefik** — eliminates iptables DNAT overhead
+9. **CPU pinning for CI** — protect online services from build load
+10. **Proxy leaks affect everything** — override in each deployment
+11. **DOCKER_BUILDKIT=0** — when proxy is needed for image pulls
+12. **Root container images for CI deploy steps** — avoids permission issues
+13. **Ingress + backend = same region** — cross-region adds seconds of latency
+14. **NetBird + k3s = DNS config required** — always add public DNS upstream in NetBird dashboard
