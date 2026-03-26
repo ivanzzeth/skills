@@ -17,6 +17,29 @@ description: >
 
 Hybrid cloud K3s cluster operations. Covers node setup, service deployment, ingress stack, CI/CD, resource management, and troubleshooting for cross-cloud clusters connected via WireGuard mesh VPN.
 
+## IMPORTANT: Read Cluster Inventory First
+
+Before ANY cluster operation, read the project-level cluster inventory:
+
+```
+.k3s-ops/cluster-inventory.md
+```
+
+This file lists all deployed services, data stores, monitoring stack, CI/CD components,
+and their access details. **Don't guess what's in the cluster — read the inventory.**
+
+The inventory is project-specific (not in this skill). If it doesn't exist, scan the
+cluster first and create it:
+
+```bash
+kubectl get deployments -A
+kubectl get svc -A
+kubectl get ingress -A
+kubectl get statefulsets -A
+kubectl get cronjobs -A
+docker ps --format "{{.Names}}\t{{.Image}}\t{{.Ports}}"  # for non-K8s services
+```
+
 ## Cluster Architecture
 
 ```

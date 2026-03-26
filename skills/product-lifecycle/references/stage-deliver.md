@@ -8,12 +8,13 @@ Containerize, deploy to K3s cluster, and verify production health.
 
 **Before starting this stage, you MUST:**
 
-1. Read `/k3s-ops` skill — understand cluster architecture, ingress stack, scheduling
-2. Read `/woodpecker-ci` skill — understand CI pipeline, shared scripts, how to trigger
-3. Read `/netbird` skill — understand VPN mesh for cross-node connectivity
-4. Check `$WOODPECKER_TOKEN` env var is set (needed for CI API access)
-5. Run `kubectl get nodes` to verify cluster access
-6. Run `kubectl get deployments` to check if service already exists in cluster
+1. **Read `.k3s-ops/cluster-inventory.md`** — know what's deployed, what monitoring exists, where data stores are
+2. Read `/k3s-ops` skill — understand cluster architecture, ingress stack, scheduling
+3. Read `/woodpecker-ci` skill — understand CI pipeline, shared scripts, how to trigger
+4. Read `/netbird` skill — understand VPN mesh for cross-node connectivity
+5. Check `$WOODPECKER_TOKEN` env var is set (needed for CI API access)
+6. Run `kubectl get nodes` to verify cluster access
+7. Run `kubectl get deployments` to check if service already exists in cluster
 
 ## Workflow
 
@@ -61,10 +62,35 @@ kubectl get ingress | grep <service-name>
 
 ### Step 3: Deploy
 
+**CRITICAL: Local validation before production**
+
+Before deploying to production K3s, validate locally first:
+
+```bash
+# Start local cluster (if not running)
+minikube start
+
+# Apply manifests locally
+kubectl --context minikube apply -f deploy/k8s/
+
+# Verify pods start correctly
+kubectl --context minikube get pods -l app=<name>
+kubectl --context minikube logs -l app=<name>
+
+# Test health endpoint
+kubectl --context minikube port-forward svc/<name> 8700:8700 &
+curl -sf http://localhost:8700/health
+
+# Clean up
+minikube delete  # or leave running for future use
+```
+
+If it works locally, proceed to production. If it crashes locally, fix before touching production.
+
 **CRITICAL: Correct deployment order**
 
 The CI pipeline (Woodpecker) only does `kubectl set image` — it assumes the Deployment
-already exists. There are two paths:
+already exists. There are three paths:
 
 **Path A: First-time deployment**
 1. Create K8s Secret for config: `kubectl create secret generic <name>-config --from-file=config.yaml`
@@ -95,10 +121,18 @@ already exists. There are two paths:
 
 ### Step 5: Monitoring & observability
 
-Invoke `/monitoring-observability` to set up:
-- Health/readiness check monitoring
-- Error rate alerting
-- Response time tracking
+Check `.k3s-ops/cluster-inventory.md` for existing monitoring stack (Prometheus, Grafana, etc.).
+
+Invoke `/prometheus-monitoring` to configure:
+- Prometheus scrape target for the new service (metrics endpoint)
+- Alert rules (error rate, response time, pod restarts)
+
+Invoke `/grafana-dashboard` to create:
+- Service dashboard (request rate, latency, error rate, resource usage)
+
+Also set up:
+- CronJob synthetic monitor (health check every 5 min)
+- Readiness probes that check real dependencies
 
 ### Step 6: Release
 
