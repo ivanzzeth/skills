@@ -433,9 +433,28 @@ tolerations:
 
 ## Minikube Local Dev Environment
 
+### IRON RULE: Minikube = Pre-Production
+
+Minikube is the **last checkpoint before production**. Its configuration MUST be identical to production.
+
+**FORBIDDEN — will NEVER be used in minikube:**
+- `devMode: true` or any auth/security bypass
+- Fake/stub credentials or mock services
+- Reduced replica counts (must match production)
+- Any application config that differs from production without a genuine infrastructure reason
+
+**ONLY these differences are allowed** (things that physically cannot work locally):
+- Hostnames: cluster-internal DNS instead of public domains
+- Image references: `imagePullPolicy: Never` with local builds instead of registry
+- Ingress class: `nginx` instead of `traefik`
+- TLS: plain HTTP instead of Let's Encrypt
+- `nodeSelector`: removed (minikube is single-node)
+
+**Everything else — replica counts, auth mode, feature flags, timeouts, resource limits — MUST match production exactly.** When creating minikube configs, start from the production config and only change the 5 items above.
+
 ### Overview
 
-Minikube provides a single-node local Kubernetes cluster for development and testing. It mirrors the production k3s environment but with simplified infrastructure (no MetalLB, no cert-manager, no Woodpecker CI).
+Minikube provides a single-node local Kubernetes cluster that mirrors production as closely as possible. Only infrastructure-level differences (ingress controller, TLS, image source) are allowed.
 
 ### Prerequisites
 
@@ -486,8 +505,12 @@ Production uses Woodpecker CI. Local dev builds images directly:
 ```bash
 # Option 1: Build inside minikube's Docker daemon (fastest, no push)
 eval $(minikube docker-env)
-cd /path/to/service
-docker build -t <service>:dev -f Dockerfile .
+docker build \
+  --build-arg HTTP_PROXY="http://192.168.49.1:7897" \
+  --build-arg HTTPS_PROXY="http://192.168.49.1:7897" \
+  --build-arg http_proxy="http://192.168.49.1:7897" \
+  --build-arg https_proxy="http://192.168.49.1:7897" \
+  -t <service>:dev -f Dockerfile .
 eval $(minikube docker-env -u)
 
 # Option 2: Build on host, load into minikube
@@ -497,22 +520,44 @@ minikube image load <service>:dev
 
 **Important**: Deployments must use `imagePullPolicy: Never` or `IfNotPresent` for local images.
 
+#### Proxy Handling for Minikube Docker Builds
+
+When the host has a proxy configured in `~/.docker/config.json` (e.g., `127.0.0.1:7897`), it leaks into BuildKit inside minikube's Docker daemon via the Docker CLI. Since `127.0.0.1` inside the minikube VM points to the VM itself (not the host), builds fail with network timeouts.
+
+**Root cause**: `~/.docker/config.json` proxy is injected by Docker CLI into BuildKit. Host's `/etc/docker/daemon.json` does NOT affect minikube's Docker daemon (they're independent processes).
+
+**Solution**: Always pass `--build-arg` with the host's bridge IP (`192.168.49.1` for docker driver) as shown above. To verify:
+
+```bash
+# Get host IP from minikube's perspective
+minikube ssh -- "ip route show default | awk '{print \$3}'"
+# → 192.168.49.1
+
+# Verify proxy is reachable from minikube VM
+minikube ssh -- "curl -s --connect-timeout 2 -o /dev/null -w '%{http_code}' http://192.168.49.1:7897"
+# → 400 (proxy is reachable)
+```
+
+**Alternative**: `minikube image build -t <image> .` bypasses Docker CLI entirely (no proxy leak), but is slower and has fewer BuildKit features.
+
 ### Manifest Differences (Production vs Minikube)
 
 When creating minikube manifests from production ones, apply these changes:
 
-| Field | Production | Minikube |
-|-------|-----------|---------|
-| `nodeSelector` | `topology.kubernetes.io/zone: vultr-tokyo` | **Remove entirely** |
-| `replicas` | 2 | 1 |
-| `image` | `registry.default.svc.cluster.local:5000/<name>:<tag>` | `<name>:dev` |
-| `imagePullPolicy` | `IfNotPresent` | `Never` (for local images) |
-| `resources.requests` | Tuned for production | Lower or remove |
-| `resources.limits` | Tuned for production | Lower or remove |
-| Ingress `ingressClassName` | `traefik` | `nginx` |
-| Ingress TLS | cert-manager + Let's Encrypt | Remove or self-signed |
-| Ingress host | `*.web3gate.xyz` | `*.local.web3gate.xyz` |
-| Config secrets | Kubernetes Secret (production values) | Kubernetes Secret (dev values) |
+| Field | Production | Minikube | Reason |
+|-------|-----------|---------|--------|
+| `nodeSelector` | `topology.kubernetes.io/zone: vultr-tokyo` | **Remove entirely** | Single node |
+| `image` | `registry.default.svc.cluster.local:5000/<name>:<tag>` | `<name>:dev` | No registry |
+| `imagePullPolicy` | `IfNotPresent` | `Never` | Local images |
+| Ingress `ingressClassName` | `traefik` | `nginx` | Different controller |
+| Ingress TLS | cert-manager + Let's Encrypt | Remove | No cert-manager |
+| Ingress host | `*.web3gate.xyz` | `*.local.web3gate.xyz` | Local DNS |
+
+**DO NOT CHANGE these — must match production exactly:**
+- `replicas` — same count as production
+- `resources.requests` / `resources.limits` — same as production
+- Application config (auth mode, feature flags, timeouts) — same as production
+- Environment variables — same as production (only hostnames differ)
 
 ### Local Domain Setup
 
