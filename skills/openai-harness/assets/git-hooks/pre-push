@@ -1,0 +1,161 @@
+#!/bin/bash
+# Pre-push hook for agent-first projects
+# Runs comprehensive checks before pushing to remote
+#
+# Install: cp assets/git-hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}Running pre-push checks...${NC}"
+
+# Read standard input to get list of refs being pushed
+# Format: <local ref> <local sha1> <remote ref> <remote sha1>
+while read local_ref local_sha remote_ref remote_sha
+do
+    # Skip if deleting a branch
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        continue
+    fi
+
+    # Get branch name
+    BRANCH=$(echo "$local_ref" | sed 's|refs/heads/||')
+    echo -e "${BLUE}Pushing branch: $BRANCH${NC}"
+
+    # 1. Check if pushing to main/master without PR
+    if echo "$BRANCH" | grep -qE '^(main|master)$'; then
+        echo -e "${YELLOW}⚠️  Pushing directly to $BRANCH${NC}"
+        echo -e "${YELLOW}   Consider using pull requests for code review${NC}"
+
+        # Uncomment to enforce PR workflow:
+        # echo -e "${RED}❌ Direct push to $BRANCH is not allowed${NC}"
+        # exit 1
+    fi
+
+    # 2. Run tests if available
+    if [ -f "Makefile" ] && grep -q "^test:" Makefile; then
+        echo -e "${BLUE}Running tests...${NC}"
+        if ! make test 2>&1 | tail -20; then
+            echo -e "${RED}❌ Tests failed${NC}"
+            echo -e "${YELLOW}   Fix failing tests before pushing${NC}"
+            exit 1
+        fi
+    elif [ -f "go.mod" ]; then
+        echo -e "${BLUE}Running Go tests...${NC}"
+        if ! go test ./... -short 2>&1 | tail -20; then
+            echo -e "${RED}❌ Go tests failed${NC}"
+            exit 1
+        fi
+    elif [ -f "package.json" ]; then
+        if grep -q '"test":' package.json; then
+            echo -e "${BLUE}Running npm tests...${NC}"
+            if ! npm test 2>&1 | tail -20; then
+                echo -e "${RED}❌ Tests failed${NC}"
+                exit 1
+            fi
+        fi
+    fi
+
+    # 3. Check for critical TODOs
+    if [ -f "scripts/lint/code_todos.py" ]; then
+        echo -e "${BLUE}Checking for critical TODOs...${NC}"
+        if ! python scripts/lint/code_todos.py . --priority high 2>&1 | head -20; then
+            echo -e "${RED}❌ Critical BUG/FIXME found in code${NC}"
+            echo -e "${YELLOW}   Fix high-priority items before pushing${NC}"
+
+            # Show the violations
+            python scripts/lint/code_todos.py . --priority high 2>&1 | grep -E '(BUG|FIXME)' || true
+
+            exit 1
+        fi
+    fi
+
+    # 4. Validate documentation structure
+    if [ -f "scripts/lint/validate_docs.py" ]; then
+        echo -e "${BLUE}Validating documentation...${NC}"
+        if ! python scripts/lint/validate_docs.py 2>&1 | head -20; then
+            echo -e "${YELLOW}⚠️  Documentation validation failed${NC}"
+            echo -e "${YELLOW}   Consider fixing before push${NC}"
+            # Non-blocking for docs
+        fi
+    fi
+
+    # 5. Check AGENTS.md size
+    if [ -f "AGENTS.md" ]; then
+        AGENTS_LINES=$(wc -l < AGENTS.md)
+        if [ $AGENTS_LINES -gt 250 ]; then
+            echo -e "${RED}❌ AGENTS.md is too large ($AGENTS_LINES lines, max: 250)${NC}"
+            echo -e "${YELLOW}   Run: ./scripts/migrate_from_monolith.py AGENTS.md --execute${NC}"
+            exit 1
+        elif [ $AGENTS_LINES -gt 200 ]; then
+            echo -e "${YELLOW}⚠️  AGENTS.md is getting large ($AGENTS_LINES lines)${NC}"
+        fi
+    fi
+
+    # 6. Check for uncommitted changes
+    if ! git diff-index --quiet HEAD --; then
+        echo -e "${YELLOW}⚠️  You have uncommitted changes${NC}"
+        echo -e "${YELLOW}   Commit or stash them before pushing${NC}"
+        git status --short
+    fi
+
+    # 7. Security scan for secrets (comprehensive)
+    echo -e "${BLUE}Running security scan...${NC}"
+
+    # Get list of changed files in this push
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch, check all commits
+        RANGE="$local_sha"
+    else
+        # Existing branch, check new commits
+        RANGE="$remote_sha..$local_sha"
+    fi
+
+    CHANGED_FILES=$(git diff --name-only $RANGE)
+
+    for FILE in $CHANGED_FILES; do
+        if [ -f "$FILE" ]; then
+            # Check for various secret patterns
+            if grep -qE '(password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key)\s*[:=]\s*["\047][^"\047$]{8,}["\047]' "$FILE" 2>/dev/null; then
+                echo -e "${RED}❌ Potential secret in: $FILE${NC}"
+                grep -nE '(password|passwd|pwd|secret|token|api[_-]?key)\s*[:=]' "$FILE" | head -5 || true
+                echo -e "${RED}   Remove secrets before pushing${NC}"
+                exit 1
+            fi
+        fi
+    done
+
+    # 8. Check commit message quality for new commits
+    echo -e "${BLUE}Checking commit messages...${NC}"
+
+    BAD_COMMITS=$(git log $RANGE --format='%H %s' | grep -iE '(wip|fixup|tmp|test|debug)' || true)
+    if [ -n "$BAD_COMMITS" ]; then
+        echo -e "${YELLOW}⚠️  Found commits with non-descriptive messages:${NC}"
+        echo "$BAD_COMMITS"
+        echo -e "${YELLOW}   Consider squashing or rewriting commit messages${NC}"
+    fi
+
+    # 9. Check for large commits
+    LARGE_COMMITS=$(git rev-list $RANGE | while read commit; do
+        CHANGES=$(git diff-tree --no-commit-id --numstat -r $commit | awk '{add+=$1; del+=$2} END {print add+del}')
+        if [ "$CHANGES" -gt 1000 ]; then
+            echo "$commit: $CHANGES lines changed"
+        fi
+    done)
+
+    if [ -n "$LARGE_COMMITS" ]; then
+        echo -e "${YELLOW}⚠️  Found large commits (>1000 lines):${NC}"
+        echo "$LARGE_COMMITS"
+        echo -e "${YELLOW}   Consider breaking into smaller commits${NC}"
+    fi
+
+done
+
+echo -e "${GREEN}✅ Pre-push checks passed${NC}"
+echo -e "${GREEN}Safe to push to remote${NC}"
+exit 0

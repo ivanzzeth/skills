@@ -1,0 +1,86 @@
+# {Project Name}
+
+{2-3 sentence project overview - what it does, who uses it}
+
+## Documentation Navigation
+
+This file serves as the entry point. Detailed documentation lives in structured subdirectories:
+
+### Core References
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System structure, domain boundaries, layer rules
+- **[docs/DESIGN.md](./docs/DESIGN.md)** - Design philosophy and principles
+- **[docs/QUALITY_SCORE.md](./docs/QUALITY_SCORE.md)** - Code quality tracking
+
+### Product & Planning
+- **[docs/product-specs/](./docs/product-specs/)** - Feature requirements and acceptance criteria
+- **[docs/exec-plans/active/](./docs/exec-plans/active/)** - In-progress execution plans
+- **[docs/exec-plans/tech-debt-tracker.md](./docs/exec-plans/tech-debt-tracker.md)** - Known technical debt
+
+### Design & Architecture
+- **[docs/design-docs/](./docs/design-docs/)** - Design decisions and verification
+- **[docs/generated/](./docs/generated/)** - Auto-generated schemas and API docs
+
+### Domain-Specific
+- **[docs/FRONTEND.md](./docs/FRONTEND.md)** - Frontend conventions (if applicable)
+- **[docs/RELIABILITY.md](./docs/RELIABILITY.md)** - SLOs, monitoring, alerting
+- **[docs/SECURITY.md](./docs/SECURITY.md)** - Security requirements and practices
+
+### External References
+- **[docs/references/](./docs/references/)** - Third-party library documentation
+
+## Quick Start
+
+1. **Understanding the codebase**: Start with [ARCHITECTURE.md](./ARCHITECTURE.md)
+2. **Working on a feature**: Check [docs/product-specs/](./docs/product-specs/) for requirements
+3. **Making changes**: Review relevant design docs in [docs/design-docs/](./docs/design-docs/)
+4. **Quality standards**: Reference [docs/QUALITY_SCORE.md](./docs/QUALITY_SCORE.md)
+
+## Critical Constraints
+
+{List 3-5 most important rules that must ALWAYS be followed, e.g.:
+- All data validation must happen at boundaries
+- Dependencies must follow layer rules: Types → Config → Repo → Service → Runtime → UI
+- Cross-cutting concerns (auth, telemetry) enter through Providers only
+- No hardcoded configuration - use config files}
+
+## Development Workflow
+
+1. **For new features**:
+   - Check if spec exists in `docs/product-specs/`
+   - Create execution plan in `docs/exec-plans/active/` if complex
+   - Review relevant design docs
+
+2. **For bugs**:
+   - Document reproduction in issue/PR
+   - Check if architecture/design doc needs update
+   - Update quality score if systemic issue
+
+3. **For refactoring**:
+   - Create design doc if architectural change
+   - Update quality score to track improvement
+   - Consider if golden principles need codification
+
+## Architecture Enforcement
+
+Custom linters validate:
+- Dependency directions between layers
+- Naming conventions (schemas, types)
+- File size limits
+- Structured logging usage
+
+Run linters: `{command to run linters}`
+
+## Where to Add Information
+
+| Type of Information | Location |
+|---------------------|----------|
+| System architecture | ARCHITECTURE.md |
+| Design decision | docs/design-docs/{decision}.md |
+| Product requirement | docs/product-specs/{feature}.md |
+| Complex work plan | docs/exec-plans/active/{YYYY-MM-DD}-{feature}.md |
+| External library docs | docs/references/{library}-llms.txt |
+| Database schema | docs/generated/db-schema.md (auto-generated) |
+| Quality tracking | docs/QUALITY_SCORE.md |
+| Security requirement | docs/SECURITY.md |
+
+**Rule**: If it's more than 3 sentences, it belongs in docs/, not this file.

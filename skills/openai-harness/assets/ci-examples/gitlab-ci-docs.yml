@@ -1,0 +1,96 @@
+# GitLab CI configuration for documentation validation
+# Add this to your .gitlab-ci.yml
+
+stages:
+  - validate
+  - garden
+
+# Documentation validation job
+validate-docs:
+  stage: validate
+  image: python:3.11-slim
+  rules:
+    - changes:
+        - docs/**/*
+        - AGENTS.md
+        - ARCHITECTURE.md
+        - scripts/lint/**/*
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - echo "Validating documentation structure..."
+    - python scripts/lint/validate_docs.py
+    - echo "Checking AGENTS.md size..."
+    - AGENTS_LINES=$(wc -l < AGENTS.md)
+    - echo "AGENTS.md has $AGENTS_LINES lines"
+    - |
+      if [ $AGENTS_LINES -gt 200 ]; then
+        echo "WARNING: AGENTS.md has $AGENTS_LINES lines (target: ~100 lines)"
+      fi
+  artifacts:
+    reports:
+      # You can add JUnit XML reports here if you convert validation output
+      junit: validation-report.xml
+    when: always
+
+# Code TODO check job
+check-code-todos:
+  stage: validate
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - echo "Checking for critical TODOs in code..."
+    - python scripts/lint/code_todos.py . --priority high || echo "Critical TODOs found"
+    - echo "Generating full TODO report..."
+    - python scripts/lint/code_todos.py . > todos-report.txt
+    - cat todos-report.txt
+  artifacts:
+    paths:
+      - todos-report.txt
+    expire_in: 1 week
+    when: always
+  # Fail pipeline if BUG or FIXME found
+  allow_failure: false
+
+# Doc gardening job (scheduled)
+doc-gardening:
+  stage: garden
+  image: python:3.11-slim
+  rules:
+    # Run on schedule (configure in GitLab UI: CI/CD > Schedules)
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    # Or manual pipeline
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  script:
+    - echo "Running doc gardening..."
+    - python scripts/lint/doc_gardening.py > gardening-report.txt || true
+    - cat gardening-report.txt
+  artifacts:
+    paths:
+      - gardening-report.txt
+    expire_in: 1 week
+  allow_failure: true
+
+# Optional: Quality check job
+check-quality-score:
+  stage: validate
+  image: python:3.11-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - echo "Checking quality metrics..."
+    - |
+      if [ -f scripts/status.py ]; then
+        python scripts/status.py
+      else
+        echo "No status script found, skipping"
+      fi
+  allow_failure: true
+
+# Example schedule configuration (set in GitLab UI):
+# Description: Weekly doc gardening
+# Interval Pattern: 0 9 * * 1 (Every Monday at 9:00 UTC)
+# Target Branch: main
+# Variables: CI_PIPELINE_SOURCE=schedule

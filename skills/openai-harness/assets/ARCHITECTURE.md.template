@@ -1,0 +1,175 @@
+# System Architecture
+
+## Overview
+
+{High-level description of the system - 2-3 paragraphs}
+
+## Business Domains
+
+{List major business domains/features, e.g.:
+- Authentication & Authorization
+- User Management
+- Billing & Subscriptions
+- Analytics & Reporting}
+
+## Architectural Layers
+
+Each business domain follows a strict layering model with enforced dependency directions:
+
+```
+Types → Config → Repo → Service → Runtime → UI
+         ↑
+     Providers (cross-cutting concerns)
+```
+
+### Layer Definitions
+
+**Types**
+- Purpose: Type definitions, interfaces, data structures
+- Dependencies: None (bottom of dependency graph)
+- Examples: User type, OrderStatus enum, API request/response shapes
+
+**Config**
+- Purpose: Configuration schemas and validation
+- Dependencies: Types only
+- Examples: Database config, feature flags, environment variables
+
+**Repo**
+- Purpose: Data access layer, database queries
+- Dependencies: Types, Config
+- Examples: UserRepository, OrderRepository, cache clients
+
+**Service**
+- Purpose: Business logic, orchestration
+- Dependencies: Types, Config, Repo, Providers
+- Examples: AuthService, BillingService, NotificationService
+
+**Runtime**
+- Purpose: Application initialization, dependency injection
+- Dependencies: All layers
+- Examples: App bootstrap, server setup, worker processes
+
+**UI**
+- Purpose: User interface components, views
+- Dependencies: All layers
+- Examples: React components, API clients, routes
+
+**Providers** (Cross-Cutting)
+- Purpose: Inject cross-cutting concerns into layers
+- Examples:
+  - Auth Provider → Services use auth context
+  - Telemetry Provider → All layers log/trace
+  - Feature Flag Provider → Services check feature availability
+  - Connector Provider → External service integrations
+
+### Dependency Rules
+
+✅ **Allowed**:
+- Lower layer → Higher layer (e.g., Types → Config)
+- Any layer → Providers
+- Runtime/UI → All layers
+
+❌ **Forbidden**:
+- Higher layer → Lower layer (e.g., Config → Types)
+- Cross-domain dependencies without explicit interface
+- Direct access to cross-cutting concerns (must go through Providers)
+
+## Domain Structure Example
+
+```
+src/
+├── domains/
+│   ├── auth/
+│   │   ├── types/         # AuthUser, LoginRequest, etc.
+│   │   ├── config/        # AuthConfig, JWT settings
+│   │   ├── repo/          # AuthRepository, SessionStore
+│   │   ├── service/       # AuthService, TokenService
+│   │   └── ui/            # LoginForm, ProfilePage
+│   └── billing/
+│       ├── types/
+│       ├── config/
+│       ├── repo/
+│       ├── service/
+│       └── ui/
+├── providers/
+│   ├── auth/              # AuthProvider
+│   ├── telemetry/         # TelemetryProvider
+│   ├── feature-flags/     # FeatureFlagProvider
+│   └── connectors/        # External integrations
+└── runtime/
+    ├── app.{ts,go}        # Application bootstrap
+    └── server.{ts,go}     # HTTP server setup
+```
+
+## Enforcement
+
+### Custom Linters
+
+Located in `scripts/lint/` or `.github/linters/`:
+
+- **layer_dependencies.{py,js}** - Validates dependency directions
+- **cross_domain_imports.{py,js}** - Catches illegal cross-domain access
+- **provider_usage.{py,js}** - Ensures cross-cutting concerns use Providers
+
+### Structural Tests
+
+Located in `tests/architecture/`:
+
+```javascript
+// Example: tests/architecture/layer-dependencies.test.ts
+test('Services only depend on Types, Config, Repo, Providers', () => {
+  const serviceDeps = getServiceDependencies();
+  expect(serviceDeps).not.toContainLayersAbove('service');
+});
+```
+
+## Technology Selection Principles
+
+Prefer technologies that are:
+- **Fully internalizable** - Agent can reason about behavior from documentation
+- **Composable** - Clear interfaces, predictable composition
+- **API-stable** - Minimal breaking changes across versions
+- **Well-documented** - Good representation in LLM training data
+
+When unclear, prefer "boring" technology over cutting-edge.
+
+## Cross-Domain Communication
+
+**Pattern**: Explicit interfaces, not direct imports
+
+```
+domains/auth/service/auth-service.ts
+domains/billing/service/billing-service.ts
+
+// ❌ DON'T: Billing directly imports Auth
+import { AuthService } from '../../auth/service/auth-service';
+
+// ✅ DO: Billing depends on auth interface from Providers
+constructor(private authProvider: AuthProvider) {
+  const user = this.authProvider.getCurrentUser();
+}
+```
+
+## Scalability Considerations
+
+{Describe how architecture supports scaling:
+- Horizontal scaling approach
+- State management (stateless services, external session store)
+- Database sharding strategy
+- Cache layers}
+
+## Reliability
+
+See [docs/RELIABILITY.md](./docs/RELIABILITY.md) for:
+- SLOs and SLIs
+- Monitoring and alerting
+- Circuit breakers and retry policies
+- Graceful degradation strategies
+
+## Security
+
+See [docs/SECURITY.md](./docs/SECURITY.md) for:
+- Authentication and authorization model
+- Data encryption (at rest, in transit)
+- Secret management
+- Security testing requirements

@@ -1,0 +1,128 @@
+# GitHub Actions workflow for documentation validation
+# Place this in: .github/workflows/docs-validation.yml
+
+name: Documentation Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'docs/**'
+      - 'AGENTS.md'
+      - 'ARCHITECTURE.md'
+      - '.github/workflows/docs-validation.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'docs/**'
+      - 'AGENTS.md'
+      - 'ARCHITECTURE.md'
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+    name: Validate Documentation Structure
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate documentation structure
+        run: |
+          python scripts/lint/validate_docs.py
+
+      - name: Check AGENTS.md size
+        run: |
+          AGENTS_LINES=$(wc -l < AGENTS.md)
+          echo "AGENTS.md has $AGENTS_LINES lines"
+          if [ $AGENTS_LINES -gt 200 ]; then
+            echo "::warning::AGENTS.md has $AGENTS_LINES lines (target: ~100 lines)"
+          fi
+
+      - name: Validate cross-links
+        run: |
+          # This is done by validate_docs.py but we can add extra checks here
+          echo "Cross-link validation completed"
+
+  check-code-todos:
+    runs-on: ubuntu-latest
+    name: Check Code TODOs
+    # Run on all PRs to catch critical BUG/FIXME before merge
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check for high-priority TODOs
+        id: todos
+        run: |
+          python scripts/lint/code_todos.py . --priority high || echo "high_priority_found=true" >> $GITHUB_OUTPUT
+
+      - name: Generate full TODO report
+        if: always()
+        run: |
+          python scripts/lint/code_todos.py . > todos_report.txt
+          cat todos_report.txt
+
+      - name: Upload TODO report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-todos-report
+          path: todos_report.txt
+
+      - name: Fail if critical TODOs found
+        if: steps.todos.outputs.high_priority_found == 'true'
+        run: |
+          echo "::error::Critical BUG or FIXME annotations found in code"
+          exit 1
+
+  doc-gardening:
+    runs-on: ubuntu-latest
+    name: Check for Stale Documentation
+    # Only run on schedule or manual trigger, not on every PR
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run doc gardening
+        id: garden
+        run: |
+          python scripts/lint/doc_gardening.py || true
+
+      - name: Create issue if problems found
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '📚 Documentation issues detected by doc gardening',
+              body: 'Automated doc gardening found issues. Please review:\n\n```\n${{ steps.garden.outputs.result }}\n```\n\nRun `make doc-gardening` locally for details.',
+              labels: ['documentation', 'automated']
+            })
+
+# Weekly doc gardening schedule
+on:
+  schedule:
+    # Every Monday at 9:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:  # Allow manual triggers

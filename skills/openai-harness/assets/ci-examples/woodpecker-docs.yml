@@ -1,0 +1,100 @@
+# Woodpecker CI configuration for documentation validation
+# Place this in: .woodpecker/docs.yml or include in .woodpecker.yml
+
+when:
+  - event: [push, pull_request]
+    path:
+      include:
+        - 'docs/**'
+        - 'AGENTS.md'
+        - 'ARCHITECTURE.md'
+        - 'scripts/lint/**'
+
+steps:
+  # Validate documentation structure
+  validate-structure:
+    image: python:3.11-slim
+    commands:
+      - echo "Validating documentation structure..."
+      - python scripts/lint/validate_docs.py
+
+  # Check AGENTS.md size
+  check-agents-size:
+    image: python:3.11-slim
+    commands:
+      - AGENTS_LINES=$(wc -l < AGENTS.md)
+      - echo "AGENTS.md has $AGENTS_LINES lines"
+      - |
+        if [ $AGENTS_LINES -gt 200 ]; then
+          echo "WARNING: AGENTS.md has $AGENTS_LINES lines (target: ~100 lines)"
+          echo "Consider moving more content to docs/"
+        fi
+
+  # Check code TODOs
+  check-code-todos:
+    image: python:3.11-slim
+    commands:
+      - echo "Checking for critical code TODOs..."
+      - python scripts/lint/code_todos.py . --priority high || echo "Critical TODOs found"
+      - echo "Generating full TODO report..."
+      - python scripts/lint/code_todos.py . > todos-report.txt || true
+      - cat todos-report.txt
+    when:
+      - event: [push, pull_request]
+
+  # Optional: Check project status
+  project-status:
+    image: python:3.11-slim
+    commands:
+      - |
+        if [ -f scripts/status.py ]; then
+          echo "Project status overview:"
+          python scripts/status.py
+        fi
+    when:
+      - event: pull_request
+    failure: ignore
+
+---
+# Separate pipeline for scheduled doc gardening
+# Configure schedule in Woodpecker UI or via API
+
+when:
+  - event: cron
+    cron: doc-gardening
+
+steps:
+  doc-gardening:
+    image: python:3.11-slim
+    commands:
+      - echo "Running doc gardening..."
+      - python scripts/lint/doc_gardening.py || true
+      - |
+        # You can add logic here to create an issue or send notification
+        # if problems are found
+        echo "Doc gardening completed"
+
+---
+# Example: Validate on every commit to main/develop
+
+when:
+  - event: push
+    branch: [main, develop]
+
+steps:
+  full-validation:
+    image: python:3.11-slim
+    commands:
+      - echo "Running full documentation validation..."
+      - python scripts/lint/validate_docs.py
+      - python scripts/lint/doc_gardening.py || true
+      - |
+        if [ -f scripts/status.py ]; then
+          python scripts/status.py
+        fi
+
+# Note: To set up cron job in Woodpecker:
+# 1. Go to repository settings in Woodpecker UI
+# 2. Add cron job with name "doc-gardening"
+# 3. Set schedule: "0 9 * * 1" (Every Monday at 9:00 UTC)
+# 4. Select branch: main

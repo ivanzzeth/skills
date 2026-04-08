@@ -1,0 +1,237 @@
+# Golden Principles
+
+These opinionated, mechanical rules keep the codebase legible and consistent for agent runs. They combat drift by encoding human taste once and enforcing it continuously.
+
+## Data Validation
+
+### Principle: Validate at Boundaries, Not YOLO-Style
+
+**Rule**: All external data (user input, API responses, database results) must be validated at the boundary before use.
+
+**Enforcement**:
+- Use schema validation libraries (Zod, Yup, io-ts, Pydantic, etc.)
+- Database queries return validated types
+- API responses parsed through schemas
+- User input validated on entry
+
+**Anti-patterns**:
+```typescript
+// ❌ DON'T: Assume shape, access properties blindly
+const name = apiResponse.user.name;
+
+// ✅ DO: Validate shape first
+const user = UserSchema.parse(apiResponse.user);
+const name = user.name;
+```
+
+## Code Reuse
+
+### Principle: Shared Utilities Over Hand-Rolled Helpers
+
+**Rule**: Prefer shared utility packages over duplicated helper functions.
+
+**Rationale**: Keeps invariants centralized, prevents divergent implementations
+
+**Enforcement**:
+- Common operations belong in `src/utils/` or `lib/`
+- If you see similar code 2+ times, extract to shared utility
+- Utilities must have 100% test coverage
+
+**Examples**:
+- Date formatting → `utils/date.ts`
+- API error handling → `utils/api-errors.ts`
+- Concurrent operations → `utils/concurrent-map.ts`
+
+## Configuration
+
+### Principle: No Hardcoded Values
+
+**Rule**: All environment-specific or tunable values must be in configuration files, not source code.
+
+**Allowed in code**:
+- Mathematical constants (π, e)
+- Protocol-defined values (HTTP status codes)
+- Algorithm parameters with clear rationale
+
+**Must be configurable**:
+- URLs and endpoints
+- Timeouts and retry limits
+- Feature flags
+- Resource limits (pool sizes, queue depths)
+
+**Enforcement**:
+```typescript
+// ❌ DON'T: Hardcoded timeout
+await fetch(url, { timeout: 5000 });
+
+// ✅ DO: Configurable timeout
+await fetch(url, { timeout: config.api.timeout });
+```
+
+## Error Handling
+
+### Principle: Explicit Errors, No Silent Failures
+
+**Rule**: Never swallow errors. Always propagate or handle explicitly.
+
+**Enforcement**:
+```typescript
+// ❌ DON'T: Silent failure
+try {
+  await syncData();
+} catch (e) {
+  // ignored
+}
+
+// ✅ DO: Explicit handling
+try {
+  await syncData();
+} catch (e) {
+  logger.error('Data sync failed', { error: e });
+  throw new DataSyncError('Failed to sync data', { cause: e });
+}
+```
+
+**Linter rule**: Flag empty catch blocks
+
+## Logging
+
+### Principle: Structured Logging Only
+
+**Rule**: All logs must be structured (JSON) for machine parseability.
+
+**Enforcement**:
+```python
+# ❌ DON'T: String concatenation
+logger.info(f"User {user_id} logged in from {ip}")
+
+# ✅ DO: Structured fields
+logger.info("user_login", extra={"user_id": user_id, "ip": ip})
+```
+
+**Required fields**:
+- `timestamp` - ISO 8601
+- `level` - debug/info/warn/error
+- `message` - Human-readable summary
+- `context` - Structured data (user_id, request_id, etc.)
+
+## Naming Conventions
+
+### Principle: Consistent, Predictable Names
+
+**Files**:
+- Types: `{domain}-types.ts`, `{domain}.types.ts`
+- Services: `{domain}-service.ts`, `{domain}.service.ts`
+- Repositories: `{domain}-repo.ts`, `{domain}.repo.ts`
+- Tests: `{filename}.test.ts`, `{filename}.spec.ts`
+
+**Variables**:
+- Boolean: `is*`, `has*`, `should*`
+- Collections: Plural nouns (`users`, `orders`)
+- Single items: Singular nouns (`user`, `order`)
+
+**Functions**:
+- Actions: Verb first (`createUser`, `fetchOrders`)
+- Predicates: `is*`, `has*`, `can*`
+- Event handlers: `on*`, `handle*`
+
+## File Size
+
+### Principle: Keep Files Focused
+
+**Rule**: Maximum {500, 1000} lines per file (excluding tests)
+
+**Rationale**: Large files indicate poor separation of concerns
+
+**Enforcement**: Linter flags files over limit
+
+**When splitting**:
+- Extract cohesive sub-modules
+- Move pure functions to utilities
+- Separate types into dedicated files
+
+## Type Safety
+
+### Principle: Strict Type Checking
+
+**Rule**: No `any`, `unknown` requires explicit handling
+
+**Enforcement** (TypeScript):
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true
+  }
+}
+```
+
+**Enforcement** (Python):
+```python
+# pyproject.toml
+[tool.mypy]
+strict = true
+disallow_any_explicit = true
+```
+
+## Testing
+
+### Principle: Test Coverage Minimums
+
+**Rule**: Core services require 95%+ coverage
+
+**By layer**:
+- Types: N/A (no logic)
+- Config: 100% (validation paths)
+- Repo: 90% (database interactions)
+- Service: 95% (business logic)
+- Runtime: 80% (integration)
+- UI: 70% (components)
+
+**Enforcement**: CI fails if coverage drops below threshold
+
+## Dependencies
+
+### Principle: Minimize External Dependencies
+
+**Rule**: Evaluate carefully before adding dependencies
+
+**Questions to ask**:
+1. Can we implement core functionality in <100 lines?
+2. Is the library actively maintained?
+3. Does it follow semantic versioning?
+4. Is the API surface stable?
+5. Can agents reason about its behavior from docs?
+
+**Prefer**:
+- Small, focused libraries over monolithic frameworks
+- "Boring" technology over cutting-edge
+- Transparent implementations over opaque magic
+
+## Platform-Specific
+
+### Principle: {Your Platform-Specific Rules}
+
+{Add your own golden principles here, e.g.:
+- React: Use functional components, hooks over classes
+- Python: Use dataclasses or Pydantic models, not dicts
+- Go: Return errors, don't panic (except for programming errors)
+- Database: Use migrations, never ALTER TABLE in production}
+
+## Enforcement Cadence
+
+**Daily**: Automated linters in CI
+**Weekly**: Doc-gardening agent scans for violations
+**On-demand**: Before major releases, run full audit
+
+## Violation Remediation
+
+When violations found:
+1. Doc-gardening agent opens PR with fix
+2. PR includes:
+   - What violated the principle
+   - Why the principle exists
+   - How the fix enforces it
+3. Reviewer (human or agent) verifies fix maintains functionality
+4. Auto-merge if tests pass + approved
