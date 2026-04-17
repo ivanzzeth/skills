@@ -39,6 +39,32 @@ Ensure `$(go env GOPATH)/bin` is on `PATH`.
 
 **Naming vs `remote-signer-cli` helpers:** `go install` names binaries after the **last path segment** (for example `cmd/tui` → `tui`, `cmd/validate-rules` → `validate-rules`). The **`remote-signer-cli`** subcommands **`validate`** and **`tui`** `exec` fixed names **`remote-signer-validate-rules`** and **`remote-signer-tui`** next to the CLI binary or on `PATH` (see upstream `cmd/remote-signer-cli/validate_cmd.go` and `tui_cmd.go`). To get matching names without manual symlinks, use **GitHub Releases**, or build from a clone the same way as upstream **`scripts/setup.sh`** (see `BIN_DIR` / `REMOTE_SIGNER_BIN_DIR` there).
 
+### Copy-paste: install smoke on a clean machine (no clone yet)
+
+Use this to prove the Go toolchain + module download path before you `git clone` for offline `validate` / preset work:
+
+```bash
+export PATH="$(go env GOPATH)/bin:$PATH"
+export GOMAXPROCS=1
+go install github.com/ivanzzeth/remote-signer/cmd/remote-signer-cli@latest
+remote-signer-cli version
+```
+
+`remote-signer-cli validate` / `remote-signer-cli tui` still need **`remote-signer-validate-rules`** and **`remote-signer-tui`** under those exact names. Raw `go install` of `cmd/tui` and `cmd/validate-rules` alone installs `tui` and `validate-rules`, which **will not** satisfy the `exec` lookup. Pick one:
+
+- **Recommended (correct names, no symlinks):** run upstream **`bash <(curl -fsSL https://raw.githubusercontent.com/ivanzzeth/remote-signer/main/scripts/setup.sh)`** and choose a path that installs or builds into a `bin/` directory on `PATH`, or install **GitHub Releases** assets (see `install_release_binaries` in `scripts/setup.sh`).
+- **From a clone (matches maintainer naming):** at repo root:
+
+  ```bash
+  cd /path/to/remote-signer
+  export GOMAXPROCS=1
+  go build -o "$(go env GOPATH)/bin/remote-signer-tui" ./cmd/tui
+  go build -o "$(go env GOPATH)/bin/remote-signer-validate-rules" ./cmd/validate-rules
+  ```
+
+  (Same `-o` naming pattern as `scripts/setup.sh`.)
+- **Local-only symlink escape hatch (after `go install` of `tui` / `validate-rules`):** only on machines you own — `ln -sf "$(go env GOPATH)/bin/tui" "$(go env GOPATH)/bin/remote-signer-tui"` and `ln -sf "$(go env GOPATH)/bin/validate-rules" "$(go env GOPATH)/bin/remote-signer-validate-rules"`. Do not rely on this in shared CI images unless your image build pins both names explicitly.
+
 ### Single entrypoint only
 
 ```bash
@@ -187,9 +213,19 @@ Use an **`http://`** base URL only when the listener is actually plain HTTP (TLS
 curl -fsS "http://127.0.0.1:8548/health"
 ```
 
+**Smoke path A2 — HTTPS health with private CA only (TLS verify; no client certificate)**
+
+When the API listens on **`https://`** with a **private CA** but **mutual TLS is disabled** (server presents a cert signed by your CA; clients do not send a client cert), **`curl -fsS https://…` alone will fail** x509 verification. Trust the CA **without** `-k`:
+
+```bash
+curl --cacert certs/ca.crt -fsS "https://127.0.0.1:8548/health"
+```
+
+Use **A2** only when your deployment truly does **not** require a client certificate. If the server is configured for **mTLS**, this call may fail with a client-auth error — use **Smoke path B** instead.
+
 **Smoke path B — HTTPS + mTLS health (private CA; explicit trust + client cert)**
 
-`curl -fsS` **against `https://` with a private CA** will fail TLS verification unless you pass CA + client certificate material (matches `scripts/gen-certs` / default Docker layout; paths relative to repo root).
+`curl -fsS` **against `https://` with a private CA** will fail TLS verification unless you pass CA material; for **mTLS** you must also send **client** certificate + key (matches `scripts/gen-certs` / default Docker layout; paths relative to repo root).
 
 **Prerequisite (clean clone):** `certs/*.crt` / `certs/*.key` are **not** checked in. Generate them first from a [remote-signer](https://github.com/ivanzzeth/remote-signer) clone at the repository root:
 
@@ -240,11 +276,28 @@ remote-signer-cli version
 command -v remote-signer-tui remote-signer-validate-rules  # needed for `remote-signer-cli tui` / `validate`
 # Deterministic offline validate (from repo root; no secrets):
 GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml
-# Smoke path A — plain HTTP listener (adjust host/port if needed):
+```
+
+**Runtime health (pick the line that matches how the server is actually listening):**
+
+```bash
+# Smoke path A — plain HTTP (no TLS):
 curl -fsS "http://127.0.0.1:8548/health"
-# Smoke path B — HTTPS + mTLS (explicit material; see "Smoke path B" above):
-# ./scripts/gen-certs.sh && test -f certs/ca.crt && test -f certs/client.crt && test -f certs/client.key
-# curl --cacert certs/ca.crt --cert certs/client.crt --key certs/client.key -fsS "https://127.0.0.1:8548/health"
+```
+
+```bash
+# Smoke path A2 — HTTPS + private CA, no client cert (see "Smoke path A2" above):
+cd /path/to/remote-signer
+test -f certs/ca.crt
+curl --cacert certs/ca.crt -fsS "https://127.0.0.1:8548/health"
+```
+
+```bash
+# Smoke path B — HTTPS + mTLS (generate material first; see "Smoke path B" above):
+cd /path/to/remote-signer
+./scripts/gen-certs.sh
+test -f certs/ca.crt && test -f certs/client.crt && test -f certs/client.key
+curl --cacert certs/ca.crt --cert certs/client.crt --key certs/client.key -fsS "https://127.0.0.1:8548/health"
 ```
 
 ## Relationship to other skills
