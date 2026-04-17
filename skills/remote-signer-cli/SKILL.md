@@ -20,7 +20,7 @@ Use this ordered pass/fail list before signing off documentation or release pack
 1. **Install smoke (no clone):** `export PATH="$(go env GOPATH)/bin:$PATH"` and `GOMAXPROCS=1 go install github.com/ivanzzeth/remote-signer/cmd/remote-signer-cli@latest` → `remote-signer-cli version` must print a semver-style string (not “command not found”).
 2. **Sibling binaries for wrapped commands:** `command -v remote-signer-tui remote-signer-validate-rules` — both must resolve if you rely on `remote-signer-cli tui` / `remote-signer-cli validate` (see **Naming vs `remote-signer-cli` helpers** below). If either is missing, use **setup.sh**, **GitHub Releases**, or **clone + `go build -o …`** from the same section.
 3. **Config paths (clone):** `git clone` → `cd` to **repository root**. Run `remote-signer-cli rule list-templates --config config.e2e.yaml` (or `--config "$(pwd)/config.e2e.yaml"` / any **absolute** `--config` path so cwd does not matter for this subcommand).
-4. **Offline validate:** from repo root, `GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml` — expect a green summary **once Foundry `forge` is available** (see **Foundry `forge` prerequisite** below). This step does **not** require API keys or signer secrets, but it **does** require the Solidity evaluator toolchain.
+4. **Offline validate:** run **Foundry `forge` prerequisite** (install → `PATH` → verify) **before** `validate`. From repo root, `GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml` — expect a green summary once `command -v forge` and `forge --version` succeed in the same shell. This step does **not** require API keys or signer secrets, but it **does** require the Solidity evaluator toolchain.
 5. **TLS material:** `./scripts/gen-certs.sh` **or** `./scripts/deploy.sh gen-certs` (same intent; see [examples/README.md](https://github.com/ivanzzeth/remote-signer/blob/main/examples/README.md)). If `./certs/` already exists and the script would prompt, use non-interactive overwrite: `CERTS_FORCE=1 ./scripts/gen-certs.sh`.
 6. **Health curls:** pick **one** line that matches the running server (scheme + port + TLS mode):
    - Plain HTTP: `curl -fsS "http://127.0.0.1:8548/health"` (same port as [README](https://github.com/ivanzzeth/remote-signer/blob/main/README.md) quick start).
@@ -204,15 +204,31 @@ Use **`--config some.yaml --write`** only when you intentionally merge into an e
 
 `failed to create Solidity evaluator: forge not found in PATH …`
 
-Before running any offline validate example:
+WTE smoke for WEB-58 step 4 is **blocked** until `forge` is installed **and** on `PATH` in the same session as `remote-signer-cli validate` (installing `foundryup` alone is not enough if the shell never loads Foundry’s env).
 
-```bash
-command -v forge   # must succeed
-# or pass an explicit binary path through the wrapper:
-# GOMAXPROCS=1 remote-signer-cli validate -forge /path/to/forge rules/treasury.example.yaml
-```
+**Do this before any offline `validate` example**
 
-Install Foundry per upstream [Foundry book](https://book.getfoundry.sh/getting-started/installation) if you need local validate smoke on a clean workstation.
+1. **Install Foundry** (pick one):
+   - **foundryup path (typical Linux/macOS):**  
+     `curl -L https://foundry.paradigm.xyz | bash`  
+     then, in the **same** shell session, run **`foundryup`** once so `forge` exists under **`$HOME/.foundry/bin`** (default layout from the installer).
+   - **Other layouts:** follow the upstream [Foundry book — Installation](https://book.getfoundry.sh/getting-started/installation) (Docker images, pinned versions, distro packages).
+2. **Export `PATH` (or source env):** the installer usually tells you to `source $HOME/.foundry/env`. If you skip that, add the bin dir explicitly, for example:  
+   `export PATH="$HOME/.foundry/bin:$PATH"`  
+   CI images that ship Foundry often place `forge` under `/usr/local/bin` instead — use **`command -v forge`** to confirm the resolved path, not assumptions.
+3. **Verify (pass/fail for QA):**
+   ```bash
+   command -v forge
+   forge --version
+   ```
+   Both must succeed **before** `remote-signer-cli validate …`.
+4. **Explicit binary (optional):** if `forge` is installed but not on `PATH`, forward a path through the wrapper (flag is passed to `remote-signer-validate-rules`):  
+   `GOMAXPROCS=1 remote-signer-cli validate -forge /path/to/forge rules/treasury.example.yaml`
+
+**Common false negatives**
+
+- **`forge not found` immediately after `foundryup`:** new shell never ran `source ~/.foundry/env` and `PATH` does not include `~/.foundry/bin`.
+- **Low `ulimit` / fork errors during `foundryup`:** pre-install Foundry in the image or cache `~/.foundry`; keep **`GOMAXPROCS=1`** for **Go** builds (`go install`, `validate` spawning Go) — Foundry itself is a separate binary once installed.
 
 **Offline rule validation (wraps `remote-signer-validate-rules`; flags are forwarded verbatim):**
 
@@ -308,7 +324,7 @@ E2E uses **`E2E_API_PORT=18548`** by default in hooks to avoid colliding with a 
 remote-signer-cli version
 command -v remote-signer-tui remote-signer-validate-rules  # needed for `remote-signer-cli tui` / `validate`
 # Offline validate (from repo root; no API secrets, but requires Foundry `forge` on PATH):
-command -v forge
+command -v forge && forge --version
 GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml
 ```
 
