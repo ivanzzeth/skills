@@ -13,6 +13,21 @@ description: >
 
 [remote-signer](https://github.com/ivanzzeth/remote-signer) is a self-hosted, policy-driven signing service (EVM today; additional chains are planned). **Money-moving and authenticated flows go through the running server** (HTTP API and/or `remote-signer-tui`). The checked-in **`remote-signer-cli`** on current `main` is intentionally **narrow**: local config/preset work, spawning **`remote-signer-validate-rules`**, and launching **`remote-signer-tui`**. It is **not** a full replacement for the EVM client surface; use **`docs/API.md`**, **`INTEGRATION.md`**, and the **TUI** for those capabilities.
 
+## QA unblock checklist (WEB-58)
+
+Use this ordered pass/fail list before signing off documentation or release packaging. **Hand off money-moving or listener-dependent checks** to the Web3 Test Engineer after you complete the offline steps.
+
+1. **Install smoke (no clone):** `export PATH="$(go env GOPATH)/bin:$PATH"` and `GOMAXPROCS=1 go install github.com/ivanzzeth/remote-signer/cmd/remote-signer-cli@latest` → `remote-signer-cli version` must print a semver-style string (not “command not found”).
+2. **Sibling binaries for wrapped commands:** `command -v remote-signer-tui remote-signer-validate-rules` — both must resolve if you rely on `remote-signer-cli tui` / `remote-signer-cli validate` (see **Naming vs `remote-signer-cli` helpers** below). If either is missing, use **setup.sh**, **GitHub Releases**, or **clone + `go build -o …`** from the same section.
+3. **Config paths (clone):** `git clone` → `cd` to **repository root**. Run `remote-signer-cli rule list-templates --config config.e2e.yaml` (or `--config "$(pwd)/config.e2e.yaml"` / any **absolute** `--config` path so cwd does not matter for this subcommand).
+4. **Offline validate:** from repo root, `GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml` — expect a green summary **once Foundry `forge` is available** (see **Foundry `forge` prerequisite** below). This step does **not** require API keys or signer secrets, but it **does** require the Solidity evaluator toolchain.
+5. **TLS material:** `./scripts/gen-certs.sh` **or** `./scripts/deploy.sh gen-certs` (same intent; see [examples/README.md](https://github.com/ivanzzeth/remote-signer/blob/main/examples/README.md)). If `./certs/` already exists and the script would prompt, use non-interactive overwrite: `CERTS_FORCE=1 ./scripts/gen-certs.sh`.
+6. **Health curls:** pick **one** line that matches the running server (scheme + port + TLS mode):
+   - Plain HTTP: `curl -fsS "http://127.0.0.1:8548/health"` (same port as [README](https://github.com/ivanzzeth/remote-signer/blob/main/README.md) quick start).
+   - HTTPS + private CA, no mTLS: `curl --cacert certs/ca.crt -fsS "https://127.0.0.1:8548/health"`.
+   - HTTPS + mTLS: add `--cert certs/client.crt --key certs/client.key` to the previous command.  
+   **Port note:** [examples/README.md](https://github.com/ivanzzeth/remote-signer/blob/main/examples/README.md) uses **`https://localhost:8549`** for SDK samples; your health URL must match **whatever port** the API actually binds (often `8548` per README — do not mix schemes or ports blindly).
+
 ## Install
 
 ### Constrained runners (`errno=11`, `resource temporarily unavailable`)
@@ -154,11 +169,11 @@ Some releases add extra operator docs (for example an SDK⇄CLI matrix). If your
 
 **Config files and working directory**
 
-- Commands below assume **`cd` into a clone of** [ivanzzeth/remote-signer](https://github.com/ivanzzeth/remote-signer) **at the repository root**, because bundled templates use **relative paths** (for example `rules/templates/*.yaml`, `e2e/fixtures/…`).
+- For a **single-command** smoke that only loads YAML templates, **`--config` may be an absolute path** — see **QA unblock checklist (WEB-58)** step 3. Commands below otherwise assume **`cd` into a clone of** [ivanzzeth/remote-signer](https://github.com/ivanzzeth/remote-signer) **at the repository root**, because bundled templates and presets use **relative paths** (for example `rules/templates/*.yaml`, `rules/presets/`, `e2e/fixtures/…`).
 - **`config.example.yaml`** is the long-form reference; many keys use **`public_key_env`** — you must set those environment variables before `config.Load` succeeds. Do not treat it as a zero-setup copy/paste unless you have already wired env vars per [docs/CONFIGURATION.md](https://github.com/ivanzzeth/remote-signer/blob/main/docs/CONFIGURATION.md).
 - **`api_keys` schema:** each key uses `admin: true` or `admin: false` for privilege level (plus `id`, `name`, `public_key` / `public_key_env`, `enabled`, optional rate limits). There is **no** `role` field in current upstream YAML — samples that use `role` will fail validation until converted to `admin`.
 - **Explicit `--config`:** subcommands such as `rule list-templates` default to **`config.yaml` in the current working directory**. In scripts and docs, always pass **`--config`** with a concrete path (for example `--config config.e2e.yaml`) so a stray half-written `config.yaml` in another directory does not cause confusing load errors.
-- For **offline CLI smoke** without wiring `public_key_env` secrets, prefer **standalone example rule files** (below) or **`config.e2e.yaml` only for read-only commands** like `rule list-templates`. Full **`validate -config …`** runs the same expansion as the server and can fail on a given checkout if the bundled config is mid-migration; use **`rules/treasury.example.yaml`** (and other `rules/*.example.yaml`) for deterministic validate smoke on a clean clone.
+- For **offline CLI smoke** without wiring `public_key_env` secrets, prefer **read-only commands** like `remote-signer-cli version` and **`rule list-templates --config config.e2e.yaml`** (no Foundry dependency). **`remote-signer-cli validate …`** always initializes a Solidity evaluator and therefore requires **Foundry `forge` on `PATH`** (or an explicit `-forge /path/to/forge` forwarded to `remote-signer-validate-rules`) even when the YAML you validate does not contain `evm_solidity_expression` rules — see **Foundry `forge` prerequisite** below. Full **`validate -config …`** additionally runs the same template/instance expansion as the server and can fail on a given checkout if the bundled config is mid-migration; treat **`rules/*.example.yaml`** as the default offline corpus once `forge` is installed.
 
 **List rule templates from a local config file:**
 
@@ -183,6 +198,22 @@ remote-signer-cli preset create-from polymarket_safe_polygon.preset.js.yaml > /t
 
 Use **`--config some.yaml --write`** only when you intentionally merge into an existing config file (see `preset create-from --help`).
 
+**Foundry `forge` prerequisite (offline `validate`)**
+
+`remote-signer-cli validate` forwards to **`remote-signer-validate-rules`**, which **always constructs a Solidity evaluator** today. If `forge` is missing, even simple YAML such as `rules/treasury.example.yaml` fails with:
+
+`failed to create Solidity evaluator: forge not found in PATH …`
+
+Before running any offline validate example:
+
+```bash
+command -v forge   # must succeed
+# or pass an explicit binary path through the wrapper:
+# GOMAXPROCS=1 remote-signer-cli validate -forge /path/to/forge rules/treasury.example.yaml
+```
+
+Install Foundry per upstream [Foundry book](https://book.getfoundry.sh/getting-started/installation) if you need local validate smoke on a clean workstation.
+
 **Offline rule validation (wraps `remote-signer-validate-rules`; flags are forwarded verbatim):**
 
 ```bash
@@ -197,7 +228,7 @@ cd /path/to/remote-signer
 GOMAXPROCS=1 remote-signer-cli validate -config ./config.yaml
 ```
 
-Use the path to **your** fully wired config (often copied from `config.example.yaml` after secrets and `public_key_env` / signer `key_env` targets are populated per [docs/CONFIGURATION.md](https://github.com/ivanzzeth/remote-signer/blob/main/docs/CONFIGURATION.md)). This runs the same template/instance expansion as the server. **`validate -config config.e2e.yaml`** is useful in upstream CI but may fail on a given `main` checkout while delegation graphs are in flux; for friction-free agent smoke, prefer **`rules/*.example.yaml`** and **`rule list-templates --config config.e2e.yaml`** instead of insisting on a green `-config config.e2e.yaml` validate.
+Use the path to **your** fully wired config (often copied from `config.example.yaml` after secrets and `public_key_env` / signer `key_env` targets are populated per [docs/CONFIGURATION.md](https://github.com/ivanzzeth/remote-signer/blob/main/docs/CONFIGURATION.md)). This runs the same template/instance expansion as the server. **`validate -config config.e2e.yaml`** is useful in upstream CI but may fail on a given `main` checkout while delegation graphs are in flux; for **forge-free** agent smoke, stick to **`rule list-templates --config config.e2e.yaml`** (read-only) until Foundry is installed, then layer in **`rules/*.example.yaml`** validates.
 
 **Launch TUI (forwards flags to `remote-signer-tui`):**
 
@@ -234,6 +265,8 @@ cd /path/to/remote-signer
 ./scripts/gen-certs.sh
 test -f certs/ca.crt && test -f certs/client.crt && test -f certs/client.key
 ```
+
+If `./certs/` already exists, `gen-certs.sh` may prompt before overwrite — for **headless QA or CI**, use `CERTS_FORCE=1 ./scripts/gen-certs.sh` (documented in the overwrite guard in upstream `scripts/gen-certs.sh`).
 
 If your environment uses the deploy helper instead, the same intent is documented as `./scripts/deploy.sh gen-certs` in upstream [examples/README.md](https://github.com/ivanzzeth/remote-signer/blob/main/examples/README.md).
 
@@ -274,7 +307,8 @@ E2E uses **`E2E_API_PORT=18548`** by default in hooks to avoid colliding with a 
 ```bash
 remote-signer-cli version
 command -v remote-signer-tui remote-signer-validate-rules  # needed for `remote-signer-cli tui` / `validate`
-# Deterministic offline validate (from repo root; no secrets):
+# Offline validate (from repo root; no API secrets, but requires Foundry `forge` on PATH):
+command -v forge
 GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml
 ```
 
