@@ -35,6 +35,8 @@ GOMAXPROCS=1 go install github.com/ivanzzeth/remote-signer/cmd/...@latest
 
 Ensure `$(go env GOPATH)/bin` is on `PATH`.
 
+**Same module root everywhere:** whether you use `go install github.com/ivanzzeth/remote-signer/cmd/...@latest` or clone and `go install ./cmd/...`, you are building from the **`github.com/ivanzzeth/remote-signer` module**. If upstream moves a `main` package, update both the `go install` path and your local `./cmd/...` invocations together so docs and scripts stay aligned.
+
 **Naming vs `remote-signer-cli` helpers:** `go install` names binaries after the **last path segment** (for example `cmd/tui` → `tui`, `cmd/validate-rules` → `validate-rules`). The **`remote-signer-cli`** subcommands **`validate`** and **`tui`** `exec` fixed names **`remote-signer-validate-rules`** and **`remote-signer-tui`** next to the CLI binary or on `PATH` (see upstream `cmd/remote-signer-cli/validate_cmd.go` and `tui_cmd.go`). To get matching names without manual symlinks, use **GitHub Releases**, or build from a clone the same way as upstream **`scripts/setup.sh`** (see `BIN_DIR` / `REMOTE_SIGNER_BIN_DIR` there).
 
 ### Single entrypoint only
@@ -120,7 +122,7 @@ There is **no** `remote-signer-cli health` on current `main`; use **`curl`** aga
 | Operator UI for signers, approvals, rules | `remote-signer-cli tui …` or run `remote-signer-tui` directly ([docs/TUI.md](https://github.com/ivanzzeth/remote-signer/blob/main/docs/TUI.md)) |
 | Application integration | [INTEGRATION.md](https://github.com/ivanzzeth/remote-signer/blob/main/INTEGRATION.md) (Go / JS client surfaces) |
 
-Some releases add extra operator docs (for example an SDK⇄CLI matrix). If your checkout includes **`docs/sdk-cli-matrix.md`**, treat it as the maintainer-maintained mapping between SDK calls and CLI or HTTP operations; otherwise rely on **`docs/API.md`** + **`INTEGRATION.md`**.
+Some releases add extra operator docs (for example an SDK⇄CLI matrix). If your checkout includes **`docs/sdk-cli-matrix.md`**, treat it as the maintainer-maintained mapping between SDK calls and CLI or HTTP operations; otherwise rely on **`docs/API.md`** + **`INTEGRATION.md`**. Authoritative hook / E2E contract remains **[docs/TESTING.md](https://github.com/ivanzzeth/remote-signer/blob/main/docs/TESTING.md)** — keep install and smoke wording consistent with that file when they overlap.
 
 ## Minimal examples
 
@@ -128,7 +130,9 @@ Some releases add extra operator docs (for example an SDK⇄CLI matrix). If your
 
 - Commands below assume **`cd` into a clone of** [ivanzzeth/remote-signer](https://github.com/ivanzzeth/remote-signer) **at the repository root**, because bundled templates use **relative paths** (for example `rules/templates/*.yaml`, `e2e/fixtures/…`).
 - **`config.example.yaml`** is the long-form reference; many keys use **`public_key_env`** — you must set those environment variables before `config.Load` succeeds. Do not treat it as a zero-setup copy/paste unless you have already wired env vars per [docs/CONFIGURATION.md](https://github.com/ivanzzeth/remote-signer/blob/main/docs/CONFIGURATION.md).
-- For **offline CLI smoke** without custom env, prefer **`config.e2e.yaml`** at repo root (checked-in templates and paths match the tree).
+- **`api_keys` schema:** each key uses `admin: true` or `admin: false` for privilege level (plus `id`, `name`, `public_key` / `public_key_env`, `enabled`, optional rate limits). There is **no** `role` field in current upstream YAML — samples that use `role` will fail validation until converted to `admin`.
+- **Explicit `--config`:** subcommands such as `rule list-templates` default to **`config.yaml` in the current working directory**. In scripts and docs, always pass **`--config`** with a concrete path (for example `--config config.e2e.yaml`) so a stray half-written `config.yaml` in another directory does not cause confusing load errors.
+- For **offline CLI smoke** without wiring `public_key_env` secrets, prefer **standalone example rule files** (below) or **`config.e2e.yaml` only for read-only commands** like `rule list-templates`. Full **`validate -config …`** runs the same expansion as the server and can fail on a given checkout if the bundled config is mid-migration; use **`rules/treasury.example.yaml`** (and other `rules/*.example.yaml`) for deterministic validate smoke on a clean clone.
 
 **List rule templates from a local config file:**
 
@@ -144,12 +148,30 @@ cd /path/to/remote-signer
 remote-signer-cli preset list
 ```
 
+**Render YAML from a preset (stdout; run from repo root so preset `template_path` resolves):**
+
+```bash
+cd /path/to/remote-signer
+remote-signer-cli preset create-from polymarket_safe_polygon.preset.js.yaml > /tmp/from-preset.yaml
+```
+
+Use **`--config some.yaml --write`** only when you intentionally merge into an existing config file (see `preset create-from --help`).
+
 **Offline rule validation (wraps `remote-signer-validate-rules`; flags are forwarded verbatim):**
 
 ```bash
 cd /path/to/remote-signer
-GOMAXPROCS=1 remote-signer-cli validate -config config.e2e.yaml
+GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml
 ```
+
+**Full config expansion (optional, stricter):**
+
+```bash
+cd /path/to/remote-signer
+GOMAXPROCS=1 remote-signer-cli validate -config ./config.yaml
+```
+
+Use the path to **your** fully wired config (often copied from `config.example.yaml` after secrets and `public_key_env` / signer `key_env` targets are populated per [docs/CONFIGURATION.md](https://github.com/ivanzzeth/remote-signer/blob/main/docs/CONFIGURATION.md)). This runs the same template/instance expansion as the server. **`validate -config config.e2e.yaml`** is useful in upstream CI but may fail on a given `main` checkout while delegation graphs are in flux; for friction-free agent smoke, prefer **`rules/*.example.yaml`** and **`rule list-templates --config config.e2e.yaml`** instead of insisting on a green `-config config.e2e.yaml` validate.
 
 **Launch TUI (forwards flags to `remote-signer-tui`):**
 
@@ -157,21 +179,35 @@ GOMAXPROCS=1 remote-signer-cli validate -config config.e2e.yaml
 remote-signer-cli tui -api-key-id admin -api-key-file ./data/admin_private.pem -url http://localhost:8548
 ```
 
-**Health (HTTP — TLS disabled on the listener)**
+**Smoke path A — HTTP health (no TLS, no client certs)**
 
-Use an **`http://`** base URL. From repo [README](https://github.com/ivanzzeth/remote-signer/blob/main/README.md):
+Use an **`http://`** base URL only when the listener is actually plain HTTP (TLS disabled in server config). From repo [README](https://github.com/ivanzzeth/remote-signer/blob/main/README.md):
 
 ```bash
 curl -fsS "http://127.0.0.1:8548/health"
 ```
 
-**Health (HTTPS + mTLS — matches `scripts/gen-certs` / Docker layout)**
+**Smoke path B — HTTPS + mTLS health (private CA; explicit trust + client cert)**
 
-`curl -fsS` **alone will fail** certificate verification against a private CA. Pass trust material explicitly (paths relative to repo root in the default layout):
+`curl -fsS` **against `https://` with a private CA** will fail TLS verification unless you pass CA + client certificate material (matches `scripts/gen-certs` / default Docker layout; paths relative to repo root).
+
+**Prerequisite (clean clone):** `certs/*.crt` / `certs/*.key` are **not** checked in. Generate them first from a [remote-signer](https://github.com/ivanzzeth/remote-signer) clone at the repository root:
+
+```bash
+cd /path/to/remote-signer
+./scripts/gen-certs.sh
+test -f certs/ca.crt && test -f certs/client.crt && test -f certs/client.key
+```
+
+If your environment uses the deploy helper instead, the same intent is documented as `./scripts/deploy.sh gen-certs` in upstream [examples/README.md](https://github.com/ivanzzeth/remote-signer/blob/main/examples/README.md).
+
+Then run the health probe (still no `-k` / `--insecure`):
 
 ```bash
 curl --cacert certs/ca.crt --cert certs/client.crt --key certs/client.key -fsS "https://127.0.0.1:8548/health"
 ```
+
+Do **not** document **`curl -k` / `--insecure`** as the primary mTLS or private-CA workflow: it skips **server** certificate verification and does **not** supply **client** authentication. It is at most an emergency operator escape hatch, not a substitute for `--cacert` / `--cert` / `--key`.
 
 If you set `REMOTE_SIGNER_URL`, it must use the **same scheme** as the running server (`http://` vs `https://`). Do not point `https://…` at a plain HTTP listener, or vice versa.
 
@@ -202,9 +238,13 @@ E2E uses **`E2E_API_PORT=18548`** by default in hooks to avoid colliding with a 
 ```bash
 remote-signer-cli version
 command -v remote-signer-tui remote-signer-validate-rules  # needed for `remote-signer-cli tui` / `validate`
-# Plain HTTP listener (adjust host/port if needed):
+# Deterministic offline validate (from repo root; no secrets):
+GOMAXPROCS=1 remote-signer-cli validate rules/treasury.example.yaml
+# Smoke path A — plain HTTP listener (adjust host/port if needed):
 curl -fsS "http://127.0.0.1:8548/health"
-# mTLS / private CA: add --cacert/--cert/--key (see "Health (HTTPS + mTLS)" above)
+# Smoke path B — HTTPS + mTLS (explicit material; see "Smoke path B" above):
+# ./scripts/gen-certs.sh && test -f certs/ca.crt && test -f certs/client.crt && test -f certs/client.key
+# curl --cacert certs/ca.crt --cert certs/client.crt --key certs/client.key -fsS "https://127.0.0.1:8548/health"
 ```
 
 ## Relationship to other skills
